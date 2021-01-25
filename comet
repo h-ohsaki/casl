@@ -87,27 +87,25 @@ def unsigned(val):
     return struct.unpack('>H', struct.pack('>h', val))[0]
 
 def check_number(val):
-    if val is None:
-        return False
-    if re.search(r'^[-+]?\d+$', val) or re.search(r'^#[\da-zA-Z]+$', val):
-        return True
-    else:
+    try:
+        if re.search(r'^[-+]?\d+$', val) or re.search(r'^#[\da-zA-Z]+$', val):
+            return True
+    except TypeError:
         return False
 
 def expand_number(val):
     if check_number(val):
-        m = re.search(r'^#(.*)$', val)
+        m = re.search(r'^#(.+)$', val)
         if m:
             val = int(val, 16)  # convert hex to decimal
-        val &= 0xffff
-        # truncate to 16 bits
-        return val
+        return val & 0xffff 	# truncate to 16 bits
     else:
         return None
 
+# ----------------------------------------------------------------
 class Memory:
     def __init__(self):
-        self._memory = [0 for addr in range(0x10000)]
+        self._memory = [0] * 0x10000
         self.clear()
     def __setitem__(self, addr, val):
         self._memory[addr] = val
@@ -144,56 +142,53 @@ class Comet:
 
     def parse(self, addr=None):
         """ Disassemble the object from the PC, and return strings for the
-        instruction and the operand."""
+        instruction and the operand.???"""
         debug(f'parse({self}, {addr})')
 
+        # decode the instruction at ADDR
         word, inst, gr, adr, xr = self.decode(addr)
-    
-        inst_sym = 'DC'
-        opr_sym = f'#{word:04x}'
-        size = 1
+
         if inst in INSTTBL:
-            inst_sym = INSTTBL[inst].nemonic
+            nemonic = INSTTBL[inst].nemonic
             type_ = INSTTBL[inst].type
-    
             # instructions with GR, adr, and XR
             if type_ == 'op1':
-                opr_sym = f'GR{gr}, #{adr:04x}'
+                opr = f'GR{gr}, #{adr:04x}'
                 if xr > 0:
-                    opr_sym += f', GR{xr}'
+                    opr += f', GR{xr}'
                 size = 2
-    
             # instructions with adr and XR
             elif type_ == 'op2':  # with adr, (XR)
-                opr_sym = f'#{adr:04x}'
+                opr = f'#{adr:04x}'
                 if xr > 0:
-                    opr_sym += f', GR{xr}'
+                    opr += f', GR{xr}'
                 size = 2
-    
             # instructions with GR
             elif type_ == 'op3':  # only with GR
-                opr_sym = f'GR{gr}'
+                opr = f'GR{gr}'
                 size = 2
-    
             # instructions without operand
             elif type_ == 'op4':  # no operand
-                opr_sym = ''
+                opr = ''
                 size = 1
+        else:
+            # interpret as a binary word by default
+            nemonic = 'DC'
+            opr = f'#{word:04x}'
+            size = 1
     
         # for IN/OUT/EXIT system calls
         if addr == SYS_IN:
-            inst_sym, opr_sym = 'IN', 'SYSTEM CALL'
+            nemonic, opr = 'IN', 'SYSTEM CALL'
+            size = 2
+        elif addr == SYS_OUT:
+            nemonic, opr = 'OUT', 'SYSTEM CALL'
+            size = 2
+        elif addr == SYS_EXIT:
+            nemonic, opr = 'EXIT', 'SYSTEM CALL'
             size = 2
     
-        if addr == SYS_OUT:
-            inst_sym, opr_sym = 'OUT', 'SYSTEM CALL'
-            size = 2
-    
-        if addr == SYS_EXIT:
-            inst_sym, opr_sym = 'EXIT', 'SYSTEM CALL'
-            size = 2
-    
-        return inst_sym, opr_sym, size
+        return nemonic, opr, size
 
     def update_fr(self, val):
         if val & 0x8000:
@@ -207,11 +202,11 @@ class Comet:
         """Execute one instruction from the PC --- evaluate the intruction,
         update registers, and advance the PC by the instruction's size."""
         debug(f'step_exec({self})')
-    
-        pc = self.state.pc
-        fr = self.state.fr
+        pc = self.state.pc	# to be updated
+        fr = self.state.fr	# read-only
         regs = self.state.gr	# alias
     
+        # calcurate the effective address
         word, inst, gr, adr, xr = self.decode(pc)
         eadr = adr
         if 1 <= xr <= 4:
@@ -336,45 +331,40 @@ class Comet:
             die(f'illegal instruction {inst:02x} at {pc:04x}')
 
         self.state.pc = pc
+    
+    def exec_in(self):
+        """Handler of the IN system call --- extract two arguments from the
+    stack, read a line from STDIN, store it in specified place."""
+        debug(f'exec_in({self})')
+        pc = self.memory[self.state.gr[4]]
+        len_addr = self.memory[self.state.gr[4] + 1]
+        buf_addr = self.memory[self.state.gr[4] + 2]
+        line = input('IN > ')  # prompt for input
+        line = line[:80]  # must be shorter than 80 characters
+        self.memory[len_addr] = len(line)
+        for c in bytearray(line, encoding='ascii'):
+            self.memory[buf_addr] = c
+            buf_addr += 1
+        self.state.pc = pc  # go back to the caller
+        self.sate.gr[4] += 1
+    
+    def exec_out(self):
+        """Handler of the OUT system call --- extract two arguments from the
+    stack, write a string to STDOUT."""
+        debug(f'exec_out({self})')
+        pc = self.memory[self.state.gr[4]]
+        len_addr = self.memory[self.state.gr[4] + 1]
+        size = self.memory[len_addr]
+        buf_addr = self.memory[self.state.gr[4] + 2]
+        print('OUT> ', end='')
+        for n in range(size):
+            c = self.memory[buf_addr + n] & 0xff
+            print(chr(c), end='')
+        print()
+        self.state.pc = pc  # go back to the caller
+        self.state.gr[4] += 1
 
-# Handler of the IN system call --- extract two arguments from the
-# stack, read a line from STDIN, store it in specified place.
-def exec_in(memory, state):
-    debug(f'exec_in({self})')
-
-    pc = mem_get(memory, state[GR4])
-    lenp = mem_get(memory, state[GR4] + 1)
-    bufp = mem_get(memory, state[GR4] + 2)
-
-    line = input('IN > ')  # prompt for input
-    line = line[:80]  # must be shorter than 80 characters
-    mem_put(memory, lenp, len(line))
-    for v in bytearray(line):
-        mem_put(memory, bufp, v)
-        bufp += 1
-
-    state[PC] = pc  # go back to the caller
-    state[GR4] += 1
-
-# Handler of the OUT system call --- extract two arguments from the
-# stack, write a string to STDOUT.
-def exec_out(memory, state):
-    debug(f'exec_out({self})')
-
-    pc = mem_get(memory, state[GR4])
-    lenp = mem_get(memory, state[GR4] + 1)
-    length = mem_get(memory, lenp)
-    bufp = mem_get(memory, state[GR4] + 2)
-
-    print('OUT> ', end='')
-    for n in range(length):
-        c = mem_get(memory, bufp + (n - 1)) & 0xff
-        print(chr(c), end='')
-    print()
-    state[PC] = pc  # go back to the caller
-    state[GR4] += 1
-
-
+# ----------------------------------------------------------------
 def cmd_run(memory, state, *args):
     debug(f'cmd_run({comet}, {args})')
     while True:
