@@ -26,7 +26,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.1
+VERSION = 0.2
 DEBUG = False
 
 # addresses of IN/OUT/EXI system calls
