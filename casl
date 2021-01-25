@@ -150,13 +150,16 @@ class LabelTable:
 
 class Memory:
     def __init__(self):
-        self.memory = [None] * 0x10000
-        self.src = [None] * 0x10000
+        self.memory = []
+        self.src = []
 
     def __repr__(self):
         return 'Memory()'
 
     def __setitem__(self, addr, val):
+        size = len(self.memory)
+        if size < addr + 1:
+            self.memory.extend([None] * (addr + 1 - size))
         self.memory[addr] = val
 
     def __getitem__(self, addr):
@@ -164,8 +167,8 @@ class Memory:
 
     def set_src_at(self, addr, line):
         size = len(self.src)
-        if size < addr:
-            self.src.extend([None] * (addr - size))
+        if size < addr + 1:
+            self.src.extend([None] * (addr + 1 - size))
         self.src[addr] = 'foo', 123, line
 
     def get_src_at(self, addr):
@@ -342,8 +345,6 @@ def pass1(file, labeltbl, memory):
                 debug(f'label/inst/opr = {label}/{inst}/{opr}')
             else:
                 error('syntax error')
-            # save the line for later use
-            memory.set_src_at(addr, f'{label or " "}\t{inst}\t{opr}')
 
             # register label to the symbol table
             if label:
