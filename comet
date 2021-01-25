@@ -6,12 +6,8 @@
 #
 
 import collections
-import fileinput
-import os
-import os.path
 import re
 import struct
-import subprocess
 import sys
 
 from perlcompat import die, warn, getopts
@@ -120,12 +116,12 @@ class State:
         self.pc = 0
         self.fr = FR_ZERO
         self.gr = [0, 0, 0, 0, STACK_TOP]
-        self.breakpoint = []
 
 class Comet:
     def __init__(self):
         self.memory = Memory()
         self.state = State()
+        self.bp = []
 
     def __repr__(self):
         return f'Comet({self.state.pc:04x}, {self.state.gr[0]:02x}, {self.state.gr[1]:02x}, {self.state.gr[2]:02x}, {self.state.gr[3]:02x}, {self.state.gr[4]:02x} {self.state.fr:#b})'
@@ -365,47 +361,53 @@ class Comet:
         self.state.gr[4] += 1
 
 # ----------------------------------------------------------------
-def cmd_run(memory, state, *args):
+def cmd_run(comet, *args):
     debug(f'cmd_run({comet}, {args})')
     while True:
-        step_exec(memory, state)
+        comet.step_exec()
         # check the PC is at one of breakpoints
-        for pnt in state[BP]:
-            if pnt == state[PC]:
-                print(f'Breakpoint ???, #{pnt:04x}')
+        for n, addr in enumerate(comet.bp):
+            if comet.state.pc == addr:
+                print(f'Breakpoint {n}, #{addr:04x}')
                 return
 
 def cmd_step(comet, *args):
     debug(f'cmd_step({comet}, {args})')
-    if args:
+    try:
         count = expand_number(args[0])
-    else:
+    except IndexError:
         count = 1
     for n in range(count):
         comet.step_exec()
 
-def cmd_break(memory, state, *args):
+def cmd_break(comet, *args):
     debug(f'cmd_break({comet}, {args})')
-    val = expand_number(args[0])
-    if val is not None:
-        state[BP].append(val)
-    else:
-        warn(f'invalid argument')
+    try:
+        addr = expand_number(args[0])
+        if addr is not None:
+            comet.bp.append(addr)
+        else:
+            warn(f'invalid breakpoint address')
+    except IndexError:
+        pass
 
-def cmd_delete(memory, state, *args):
+def cmd_delete(comet, *args):
     debug(f'cmd_delete({comet}, {args})')
-    val = expand_number(args[0])
-    if val is not None:
-        state[BP] = state[BP][:val - 1] + state[BP][val + 1:]
-    else:
-        answer = input('Delete all breakpoints? (y or n) ')
-        if answer == 'y' or answer == 'Y':
-            state[BP] = []
+    try:
+        n = expand_number(args[0])
+        if n is not None:
+            del comet.bp[n - 1]
+        else:
+            resp = input('Delete all breakpoints? (y or n) ')
+            if re.search(r'^[yY]', resp):
+                comet.bp.clear()
+    except IndexError:
+        pass
 
-def cmd_info(memory, state, *args):
+def cmd_info(comet, *args):
     debug(f'cmd_info({comet}, {args})')
-    for pnt in state[BP]:
-        print(f'??: #{pnt:04x}')
+    for n, addr in enumerate(comet.bp):
+        print(f'{n}: #{addr:04x}')
 
 def cmd_print(comet, *args):
     debug(f'cmd_print({comet}, {args})')
@@ -413,51 +415,54 @@ def cmd_print(comet, *args):
     inst, opr, size = comet.parse()
     gr = comet.state.gr
     fr = comet.state.fr
-
-    print()
-    print(f"PC  #{comet.state.pc:04x} [ {inst} {opr} ]\n"
-f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
+    print(""
+        f"PC  #{comet.state.pc:04x} [ {inst} {opr} ]\n"
+            f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
 f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
 f"GR2 #{gr[2]:04x} ({signed(gr[2]):6})\n"
 f"GR3 #{gr[3]:04x} ({signed(gr[3]):6}) "
 f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
 f"FR  {fr:#b} ({fr:6})\n")
 
-def cmd_dump(memory, state, *args):
+def cmd_dump(comet, *args):
     debug(f'cmd_dump({comet}, {args})')
-    val = expand_number(args[0])
-    if val is not None:
-        val = state[PC]
+    try:
+        addr = expand_number(args[0])
+    except IndexError:
+        addr = comet.state.pc
     for row in range(16):
-        base = val + (row << 3)
+        base = addr + (row << 3)
         print(f'{base:04x}')
         for col in range(8):
-            v = mem_get(memory, base + col)
-            print(f' {v:04x}')
+            v = comet.memory[base + col]
+            print(f' {v:04x}', end='')
         print(' ', end='')
         for col in range(8):
-            v = mem_get(memory, base + col) & 0xff
-            c = chr(v) if 0x20 <= v <= 0x7f else '.'
+            v = comet.memory[base + col] & 0xff
+            if 0x20 <= v <= 0x7f:
+                c = chr(v)
+            else:
+                c = '.'
             print(c, end='')
         print()
 
-def cmd_stack(memory, state, *args):
+def cmd_stack(comet, *args):
     debug(f'cmd_stack({comet}, {args})')
-    val = state[GR4]
-    cmd_dump(memory, state, val)
+    addr = comet.state.gr[4]
+    cmd_dump(comet, addr)
 
 def cmd_file(comet, file):
     debug(f'cmd_file({comet}, {file})')
     with open(file, 'rb') as f:
-        warn(f'Reading object from {file}...')
+        print(f'Reading object from {file}...')
 
-        # check file type
+        # parse the file header
         header = f.read(16)
         if header[:4] != b'CASL':
             die(f'{file}: not a COMET object file')
         comet.state.pc = struct.unpack('>H', header[4:6])[0]
 
-        # read into memory
+        # load object into the memory
         addr = 0
         while True:
             buf = f.read(2)
@@ -467,37 +472,43 @@ def cmd_file(comet, file):
                 die('out of memory')
             comet.memory[addr] = struct.unpack('>H', buf)[0]
             addr += 1
-        warn('done.')
+        print('done.')
 
-def cmd_jump(memory, state, *args):
+def cmd_jump(comet, *args):
     debug(f'cmd_jump({comet}, {args})')
-    val = expand_number(args[0])
-    if val is not None:
-        state[PC] = expand_number(val)
-    else:
-        warn(f'invalid argument')
+    try:
+        addr = expand_number(args[0])
+        if addr is not None:
+            comet.state.pc = expand_number(addr)
+        else:
+            warn(f'invalid jump address "{args[0]}"')
+    except IndexError:
+        pass
 
-def cmd_memory(memory, state, *args):
+def cmd_memory(comet, state, *args):
     debug(f'cmd_memory({comet}, {args})')
-    adr = expand_number(args[0])
-    val = expand_number(args[1])
-    if adr is not None and val is not None:
-        mem_put(memory, adr, val)
-    else:
-        warn('invalid argument')
+    try:
+        addr = expand_number(args[0])
+        val = expand_number(args[1])
+        if addr is not None and val is not None:
+            comet.memory[addr] = val
+        else:
+            warn('invalid address "{args[0]}" or value "{args[1]}"')
+    except IndexError:
+        pass
 
 def cmd_disasm(comet, *args):
     debug(f'cmd_disasm({comet}, {args})')
-    if args:
+    try:
         addr = expand_number(args[0])
-    else:
+    except IndexError:
         addr = comet.state.pc
     for n in range(16):
         inst, opr, size = comet.parse(addr)
         print(f'#{addr:04x}\t{inst}\t{opr}')
         addr += size
 
-def cmd_help(memory, state, *args):
+def cmd_help(comet, *args):
     debug(f'cmd_help({comet}, {args})')
     print("""\
 List of commands:
