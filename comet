@@ -467,7 +467,7 @@ def cmd_stack(comet, *args):
 def cmd_file(comet, file):
     debug(f'cmd_file({comet}, {file})')
     with open(file, 'rb') as f:
-        print(f'Reading object from {file}...')
+        print(f'Reading object from {file}...', end='')
 
         # parse the file header
         header = f.read(16)
@@ -588,6 +588,7 @@ def main():
         line = input('comet> ')
         if line == '':
             line = last_line
+        last_line = line
         cmd, *args = re.split(r'\s+', line)
         if not cmd:
             continue
