@@ -23,7 +23,7 @@ including UNIX flavors, Windows, and macOS.
 
 # AVAILABILITY
 
-The latest version of *casl* is available at
+The latest version of *casl* is available at https://pypi.org/project/casl/ .
 
 # COPYRIGHT
 
