@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# 
+#
 # A simple implementation of COMET emulator.
 # Copyright (c) 2021, Hiroyuki Ohsaki.
 # All rights reserved.
-# 
+#
 
 import fileinput
 import os
@@ -48,32 +48,31 @@ INSTTBL = {# COMET instructions
                }
 
 # addresses of IN/OUT/EXI system calls
-SYS_IN   = 0xfff0
-SYS_OUT  = 0xfff2
+SYS_IN = 0xfff0
+SYS_OUT = 0xfff2
 SYS_EXIT = 0xfff4
 
-# values of the flag register 
-FR_PLUS  = 0
-FR_ZERO  = 1
+# values of the flag register
+FR_PLUS = 0
+FR_ZERO = 1
 FR_MINUS = 2
 
-# the top of the stack, which is the upper limit of the stack space. 
+# the top of the stack, which is the upper limit of the stack space.
 STACK_TOP = 0xff00
 
 # indices for the state list, @state
-PC  = 0
-FR  = 1
+PC = 0
+FR = 1
 GR0 = 2
 GR1 = 3
 GR2 = 4
 GR3 = 5
 GR4 = 6
-BP  = 7
+BP = 7
 
 # maximum/minimum of signed value
-MAX_SIGNED =  32767
+MAX_SIGNED = 32767
 MIN_SIGNED = -32768
-
 
 VERSION = 0.1
 DEBUG = 1
@@ -89,11 +88,10 @@ def debug(msg):
         warn(msg)
 
 def signed(val):
-    return struct.unpack('>h', struct.pack('>H', val))
-
+    return struct.unpack('>h', struct.pack('>H', val))[0]
 
 def unsigned(val):
-    return struct.unpack('>H', struct.pack('>h', val))
+    return struct.unpack('>H', struct.pack('>h', val))[0]
 
 def check_number(val):
     if val is None:
@@ -108,9 +106,10 @@ def expand_number(val):
         m = re.search(r'^#(.*)$', val)
         if m:
             val = int(val, 16)  # convert hex to decimal
-        val &= 0xffff;          # truncate to 16 bits
+        val &= 0xffff
+        # truncate to 16 bits
         return val
-    else: 
+    else:
         return None
 
 def get_flag(val):
@@ -118,31 +117,31 @@ def get_flag(val):
         return FR_MINUS
     elif val == 0:
         return FR_ZERO
-    else: 
+    else:
         return FR_PLUS
 
 def mem_get(memory, pc):
     if pc in memory:
         return memory[pc]
-    else: 
+    else:
         return 0
 
 def mem_put(memory, pc, val):
     memory[pc] = val
-    
+
 # Disassemble the object from the PC, and return strings for
 # the instruction and the operand.
 def parse(memory, state):
     debug(f'parse(memory, state)')
-    
-    pc   = state[PC]
+
+    pc = state[PC]
     inst = mem_get(memory, pc) >> 8
-    gr   = (mem_get(memory, pc) >> 4) & 0xf
-    xr   = mem_get(memory, pc) & 0xf
-    adr  = mem_get(memory, pc + 1)
-    
+    gr = (mem_get(memory, pc) >> 4) & 0xf
+    xr = mem_get(memory, pc) & 0xf
+    adr = mem_get(memory, pc + 1)
+
     inst_sym = 'DC'
-    opr_sym  = f'#{mem_get(memory, pc):04x}'
+    opr_sym = f'#{mem_get(memory, pc):04x}'
     size = 1
     key = f'0x{inst:02x}'
 
@@ -152,27 +151,27 @@ def parse(memory, state):
 
         # instructions with GR, adr, and XR
         if type_ == 'op1':
-            opr_sym  = f'GR{gr}, #{adr:04x}'
+            opr_sym = f'GR{gr}, #{adr:04x}'
             if xr > 0:
                 opr_sym += f', GR{xr}'
             size = 2
 
         # instructions with adr and XR
-        elif type_ == 'op2': # with adr, (XR)
-            opr_sym  = f'#{adr:04x}'
+        elif type_ == 'op2':  # with adr, (XR)
+            opr_sym = f'#{adr:04x}'
             if xr > 0:
                 opr_sym += f', GR{xr}'
-            size     = 2
+            size = 2
 
         # instructions with GR
         elif type_ == 'op3':  # only with GR
-            opr_sym  = f'GR{gr}'
-            size     = 2
+            opr_sym = f'GR{gr}'
+            size = 2
 
         # instructions without operand
-        elif type_ == 'op4': # no operand
+        elif type_ == 'op4':  # no operand
             opr_sym = ''
-            size     = 1
+            size = 1
 
     # for IN/OUT/EXIT system calls
     if pc == SYS_IN:
@@ -194,18 +193,18 @@ def parse(memory, state):
 def exec_in(memory, state):
     debug(f'exec_in(memory, state)')
 
-    pc   = mem_get(memory, state[GR4])
+    pc = mem_get(memory, state[GR4])
     lenp = mem_get(memory, state[GR4] + 1)
     bufp = mem_get(memory, state[GR4] + 2)
 
-    line = input('IN > ')               # prompt for input
-    line = line[:80]    # must be shorter than 80 characters
+    line = input('IN > ')  # prompt for input
+    line = line[:80]  # must be shorter than 80 characters
     mem_put(memory, lenp, len(line))
     for v in bytearray(line):
         mem_put(memory, bufp, v)
         bufp += 1
 
-    state[PC] = pc      # go back to the caller
+    state[PC] = pc  # go back to the caller
     state[GR4] += 1
 
 # Handler of the OUT system call --- extract two arguments from the
@@ -213,9 +212,9 @@ def exec_in(memory, state):
 def exec_out(memory, state):
     debug(f'exec_out(memoryp, statep)')
 
-    pc   = mem_get(memory, state[GR4])
+    pc = mem_get(memory, state[GR4])
     lenp = mem_get(memory, state[GR4] + 1)
-    length  = mem_get(memory, lenp)
+    length = mem_get(memory, lenp)
     bufp = mem_get(memory, state[GR4] + 2)
 
     print('OUT> ', end='')
@@ -223,7 +222,7 @@ def exec_out(memory, state):
         c = mem_get(memory, bufp + (n - 1)) & 0xff
         print(chr(c), end='')
     print()
-    state[PC] = pc      # go back to the caller
+    state[PC] = pc  # go back to the caller
     state[GR4] += 1
 
 # Execute one instruction from the PC --- evaluate the intruction,
@@ -237,30 +236,30 @@ def step_exec(memory, state):
     if inst == 'IN':
         exec_in(memory, state)
         return
-    
+
     if inst == 'OUT':
         exec_out(memory, state)
         return
-    
+
     if inst == 'EXIT':
         sys.exit(1)
 
-    pc   = state[PC]
-    fr   = state[FR]
-    regs = state[GR0 : GR4 + 1]
-    
-    gr   = (mem_get(memory, pc) >> 4) & 0xf
-    xr   = mem_get(memory, pc) & 0xf
-    adr  = mem_get(memory, pc + 1)
+    pc = state[PC]
+    fr = state[FR]
+    regs = state[GR0:GR4 + 1]
+
+    gr = (mem_get(memory, pc) >> 4) & 0xf
+    xr = mem_get(memory, pc) & 0xf
+    adr = mem_get(memory, pc + 1)
     eadr = adr
     if 1 <= xr <= 4:
         eadr += regs[xr]
     eadr &= 0xffff
-  
+
     if inst == 'LD':
         regs[gr] = mem_get(memory, eadr)
         pc += 2
-        
+
     elif inst == 'ST':
         mem_put(memory, eadr, regs[gr])
         pc += 2
@@ -296,7 +295,7 @@ def step_exec(memory, state):
         regs[gr] ^= mem_get(memory, eadr)
         fr = get_flag(regs[gr])
         pc += 2
-        
+
     elif inst == 'CPA':
         v = signed(regs[gr]) - signed(mem_get(memory, eadr))
         if v > MAX_SIGNED:
@@ -305,7 +304,7 @@ def step_exec(memory, state):
             v = MIN_SIGNED
         fr = get_flag(unsigned(v))
         pc += 2
-        
+
     elif inst == 'CPL':
         v = regs[gr] - mem_get(memory, eadr)
         if v > MAX_SIGNED:
@@ -314,31 +313,31 @@ def step_exec(memory, state):
             v = MIN_SIGNED
         fr = get_flag(unsigned(v))
         pc += 2
-        
+
     elif inst == 'SLA':
         v = regs[gr] & 0x8000
         regs[gr] <<= eadr
         regs[gr] |= v
         fr = get_flag(regs[gr])
         pc += 2
-        
+
     elif inst == 'SRA':
         v = regs[gr]
         if v & 0x8000:
             v &= 0x7fff
             v >>= eadr
             v += ((0x7fff >> eadr) ^ 0xffff)
-        else: 
+        else:
             v >>= eadr
         regs[gr] = v
         fr = get_flag(regs[gr])
         pc += 2
-        
+
     elif inst == 'SLL':
         regs[gr] <<= eadr
         fr = get_flag(regs[gr])
         pc += 2
-        
+
     elif inst == 'SRL':
         regs[gr] >>= eadr
         fr = get_flag(regs[gr])
@@ -346,16 +345,16 @@ def step_exec(memory, state):
 
     elif inst == 'JPZ':
         pc = eadr if fr != FR_MINUS else pc + 2
-        
+
     elif inst == 'JMI':
         pc = eadr if fr == FR_MINUS else pc + 2
 
     elif inst == 'JNZ':
         pc = eadr if fr != FR_ZERO else pc + 2
-        
+
     elif inst == 'JZE':
         pc = eadr if fr == FR_ZERO else pc + 2
-        
+
     elif inst == 'JMP':
         pc = eadr
 
@@ -368,23 +367,23 @@ def step_exec(memory, state):
         regs[gr] = mem_get(memory, regs[4])
         regs[4] += 1
         pc += 2
-        
+
     elif inst == 'CALL':
         regs[4] -= 1
         mem_put(memory, regs[4], pc + 2)
         pc = eadr
-        
+
     elif inst == 'RET':
         pc = mem_get(memory, regs[4])
         regs[4] += 1
 
-    else: 
+    else:
         die(f'illegal instruction inst at {pc:04x}.')
 
     # update registers
     state[PC] = pc
     state[FR] = fr
-    state[GR0 : GR4 + 1] = regs
+    state[GR0:GR4 + 1] = regs
 
 def cmd_run(memory, state, *args):
     debug(f'cmd_run(memoryp, statep, {args})')
@@ -410,15 +409,15 @@ def cmd_break(memory, state, *args):
     val = expand_number(args[0])
     if val is not None:
         state[BP].append(val)
-    else: 
+    else:
         warn(f'invalid argument')
 
 def cmd_delete(memory, state, *args):
     debug(f'cmd_delete(memoryp, statep, {args})')
     val = expand_number(args[0])
     if val is not None:
-        state[BP] = state[BP][:val-1] + state[BP][val+1:]
-    else: 
+        state[BP] = state[BP][:val - 1] + state[BP][val + 1:]
+    else:
         answer = input('Delete all breakpoints? (y or n) ')
         if answer == 'y' or answer == 'Y':
             state[BP] = []
@@ -430,22 +429,21 @@ def cmd_info(memory, state, *args):
 
 def cmd_print(memory, state, *args):
     debug(f'cmd_print(memoryp, statep, {args})')
-    pc   = state[PC]
-    fr   = state[FR]
-    regs = state[GR0 :GR4+1]
+    pc = state[PC]
+    fr = state[FR]
+    regs = state[GR0:GR4 + 1]
 
     # obtain instruction and operand at current PC
     inst, *opr = parse(memory, state)
-    
+
     print()
-    print(f"""\
-PC  #{pc:04x} [ {inst} {opr} ]
-GR0 #{regs[0]} ({signed(regs[0])})
-GR1 #{regs[0]} ({signed(regs[0])})
-GR2 #{regs[0]} ({signed(regs[0])})
-GR3 #{regs[0]} ({signed(regs[0])})
-GR4 #{regs[0]} ({signed(regs[0])})
-FR  {bin(fr)} ({fr})""")
+    print(f"PC  #{pc:04x} [ {inst} {opr} ]\n"
+f"GR0 #{regs[0]:04x} ({signed(regs[0]):6}) "
+f"GR1 #{regs[0]:04x} ({signed(regs[0]):6}) "
+f"GR2 #{regs[0]:04x} ({signed(regs[0]):6})\n"
+f"GR3 #{regs[0]:04x} ({signed(regs[0]):6}) "
+f"GR4 #{regs[0]:04x} ({signed(regs[0]):6}) "
+f"FR  {fr:#b} ({fr:6})\n")
 
 def cmd_dump(memory, state, *args):
     debug(f'cmd_dump(memoryp, statep, {args})')
@@ -469,40 +467,38 @@ def cmd_stack(memory, state, *args):
     debug(f'cmd_stack(memoryp, statep, {args})')
     val = state[GR4]
     cmd_dump(memory, state, val)
-    
+
 def cmd_file(memory, state, *args):
     debug(f'cmd_file(memoryp, statep, {args})')
-    val = args[0]
-    if val is not None:
-        with open(val, 'rb') as f:
-            print(f'Reading object from {val}...')
-            # check file type
-            header = f.read(16)
-            if header[:4] != b'CASL':
-                die(f'{val}: not a COMET object file')
-            start = 0 # FIXME
-            # read into MEMORY
-            pc = 0
-            memory = [0] * 0x10000        # clear memory
-            while True:
-                buf = f.read(2)
-                if len(buf) < 2:
-                    break
-                memory[pc] = struct.unpack('>H', buf)
-                pc += 1
-                if pc > STACK_TOP:
-                    die('out of memory')
-        state[PC] = start
-        print('done.')
-    else: 
-        warn(f'invalid argument "{val}".')
+    file = args[0]
+    with open(file, 'rb') as f:
+        print(f'Reading object from {file}...')
+        # check file type
+        header = f.read(16)
+        if header[:4] != b'CASL':
+            die(f'{file}: not a COMET object file')
+        start = struct.unpack('>H', header[4:6])[0]
+        # read into MEMORY
+        pc = 0
+        for addr in range(0x10000):
+            memory[addr] = 0# clear memory
+        while True:
+            buf = f.read(2)
+            if len(buf) < 2:
+                break
+            if pc >= STACK_TOP:
+                die('out of memory')
+            memory[pc] = struct.unpack('>H', buf)[0]
+            pc += 1
+    state[PC] = start
+    print('done.')
 
 def cmd_jump(memory, state, *args):
     debug(f'cmd_jump(memoryp, statep, {args})')
     val = expand_number(args[0])
     if val is not None:
         state[PC] = expand_number(val)
-    else: 
+    else:
         warn(f'invalid argument')
 
 def cmd_memory(memory, state, *args):
@@ -511,7 +507,7 @@ def cmd_memory(memory, state, *args):
     val = expand_number(args[1])
     if adr is not None and val is not None:
         mem_put(memory, adr, val)
-    else: 
+    else:
         warn('invalid argument')
 
 def cmd_disasm(memory, state, *args):
@@ -521,14 +517,14 @@ def cmd_disasm(memory, state, *args):
     else:
         val = state[PC]
 
-    pc = state[PC]      # save original PC
+    pc = state[PC]  # save original PC
     state[PC] = val
 
     for n in range(16):
         inst, opr, size = parse(memory, state)
         print(f'#{state[PC]:04x}\t{inst}\t{opr}')
         state[PC] += size
-    state[PC] = pc     # restore PC
+    state[PC] = pc  # restore PC
 
 def cmd_help(memory, state, *args):
     debug(f'cmd_help(memoryp, statep, {args})')
@@ -550,20 +546,21 @@ di, disasm      Disassemble 32 words from specified address.
 h,  help        Print list of commands.
 q,  quit        Exit comet.""")
 
-CMDTBL = {'r(r|run)'     : {     'subr' : cmd_run,    'list' : 1 },
-              r'(s|step)'    : { 'subr' : cmd_step,   'list' : 1 },
-              r'(b|break)'   : { 'subr' : cmd_break,  'list' : 0 },
-              r'(de|del)'  : {    'subr' : cmd_delete, 'list' : 0 },
-              r'(i|info)'    : { 'subr' : cmd_info,   'list' : 0 },
-              r'(p|print)'   : { 'subr' : cmd_print,  'list' : 0 },
-              r'(du|dump)'   : { 'subr' : cmd_dump,   'list' : 0 },
-              r'(st|stack)'  : { 'subr' : cmd_stack,  'list' : 0 },
-              r'(f|file)'    : { 'subr' : cmd_file,   'list' : 1 },
-              r'(j|jump)'    : { 'subr' : cmd_jump,   'list' : 1 },
-              r'(m|memory)'  : { 'subr' : cmd_memory, 'list' : 1 },
-              r'(di|disasm)' : { 'subr' : cmd_disasm, 'list' : 0 },
-              r'(h|help)'    : { 'subr' : cmd_help,   'list' : 0 },
-              }
+CMDTBL = {
+    'r(r|run)': {'subr': cmd_run, 'list': 1},
+    r'(s|step)': {'subr': cmd_step, 'list': 1},
+    r'(b|break)': {'subr': cmd_break, 'list': 0},
+#    r'(de|del)': {'subr': cmd_delete, 'list': 0},
+    r'(i|info)': {'subr': cmd_info, 'list': 0},
+    r'(p|print)': {'subr': cmd_print, 'list': 0},
+    r'(du|dump)': {'subr': cmd_dump, 'list': 0},
+    r'(st|stack)': {'subr': cmd_stack, 'list': 0},
+    r'(f|file)': {'subr': cmd_file, 'list': 1},
+    r'(j|jump)': {'subr': cmd_jump, 'list': 1},
+    r'(m|memory)': {'subr': cmd_memory, 'list': 1},
+    r'(di|disasm)': {'subr': cmd_disasm, 'list': 0},
+    r'(h|help)': {'subr': cmd_help, 'list': 0},
+}
 
 def main():
     opt = getopts('q') or usage()
@@ -574,7 +571,7 @@ Copyright (c) 2021, Hiroyuki Ohsaki.
 All rights reserved.""")
 
     # memory image
-    memory = [0] * 0x10000
+    memory = [0 for _ in range(0x10000)]
 
     # PC, FR, GR0, GR1, GR2, GR3, GR4 (SP), break points
     state = [0x0000, FR_ZERO, 0, 0, 0, 0, STACK_TOP, ()]
@@ -595,7 +592,7 @@ All rights reserved.""")
             continue
         if re.search(r'^(q|quit)$', cmd):
             break
-    
+
         # execute command according to command
         found = 0
         for regexp in CMDTBL.keys():
@@ -605,7 +602,7 @@ All rights reserved.""")
                     cmd_print(memory, state, *args)
                 found = 1
                 break
-    
+
         if not found:
             print('undefined command: "{cmd}". Try "help"')
 
