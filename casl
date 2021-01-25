@@ -234,11 +234,12 @@ class Assembler:
         self.labeltbl = LabelTable(debug_func=self.debug, assembler=self)
 
         self.start_addr = 0
+        self.end_addr = 0
         self.lineno = None
         self.line = None
 
     def __repr__(self):
-        return f'Assembler({self.file}:{self.lineno})'
+        return f'Assembler(start={self.start_addr}, addr={self.addr})'
 
     def copyright(self):
         return """\
@@ -327,7 +328,8 @@ All rights reserved."""
         if not label:
             self.error("no label found at START")
         if inst.opr1 is not None:
-            self.start_addr = inst.opr1
+            self.start_addr = parse_number(inst.opr1)
+            self.addr = self.start_addr
         self.in_block = True
 
     # END instruction
@@ -336,6 +338,7 @@ All rights reserved."""
             self.error("can't use label '{label}' at END")
         if inst.noprs > 0:
             self.error(f"END accepts no operand '{inst}'")
+        self.end_addr = self.addr - 1
         self.in_block = False
 
     # DS instruction
@@ -432,30 +435,31 @@ All rights reserved."""
     def pass2(self):
         """Open the output file, and dump the assembled object code."""
         self.debug(f'pass2({self})')
-        base = os.path.basename(self.file)
-        base = re.sub(r'\.cas$', '', base, flags=re.I)
-        outfile = f'{base}.com'
+        base = re.sub(r'\.cas', '', self.file, flags=re.I)
+        outfile = base + '.com'
         with open(outfile, 'wb') as f:
             # print object header
             f.write(struct.pack('>4sH10x', b'CASL', self.start_addr))
             # dump memory image
-            for addr, val in enumerate(self.memory):
-                val = self.labeltbl.expand(val)
-                f.write(struct.pack('>H', val))
+            for addr in range(self.start_addr, self.end_addr + 1):
+                val = self.memory[addr]
+                v = self.labeltbl.expand(val)
+                f.write(struct.pack('>H', v))
 
     def dump_memory(self):
         self.debug(f'dump_memory({self})')
         print('CASL LISTING file')
         last_lineno = None
-        for addr, val in enumerate(self.memory):
-            val = self.labeltbl.expand(val)
+        for addr in range(self.start_addr, self.end_addr + 1):
+            val = self.memory[addr]
+            v = self.labeltbl.expand(val)
             file, lineno, line = self.memory.src_at(addr)
             if lineno != last_lineno:
-                print(f'{lineno:4} {addr:04x} {val:04x}\t', end='')
+                print(f'{lineno:4} {addr:04x} {v:04x}\t', end='')
                 print(line)
                 last_lineno = lineno
             else:
-                print(f'{lineno:4}      {val:04x}')
+                print(f'{lineno:4}      {v:04x}')
 
     def dump_labels(self):
         self.debug(f'dump_label({self})')
