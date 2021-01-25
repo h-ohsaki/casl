@@ -153,6 +153,8 @@ class Comet:
         """ Disassemble the object from the PC, and return strings for the
         instruction and the operand.???"""
         debug(f'parse({self}, {addr})')
+        if addr is None:
+            addr = self.state.pc
 
         # decode the instruction at ADDR
         word, inst, gr, adr, xr = self.decode(addr)
@@ -343,7 +345,7 @@ class Comet:
 
     def exec_in(self):
         """Handler of the IN system call --- extract two arguments from the
-    stack, read a line from STDIN, store it in specified place."""
+        stack, read a line from STDIN, store it in specified place."""
         debug(f'exec_in({self})')
         pc = self.memory[self.state.gr[4]]
         len_addr = self.memory[self.state.gr[4] + 1]
@@ -359,7 +361,7 @@ class Comet:
 
     def exec_out(self):
         """Handler of the OUT system call --- extract two arguments from the
-    stack, write a string to STDOUT."""
+        stack, write a string to STDOUT."""
         debug(f'exec_out({self})')
         pc = self.memory[self.state.gr[4]]
         len_addr = self.memory[self.state.gr[4] + 1]
