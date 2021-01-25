@@ -64,7 +64,7 @@ SYS_OUT = 0xfff2
 SYS_EXIT = 0xfff4
 
 VERSION = 0.1
-DEBUG = 1
+DEBUG = 0
 
 # global variables of currently processing file and line number.
 # These variables are used in &error.
@@ -105,8 +105,9 @@ def add_label(tbl, label, val):
 def expand_label(tbl, val):
     debug(f'expand_label(tbl, {val})')
     if type(val) == str:
-        if re.search(r'^\#([\da-f]+)', val, flags=re.I):
-            val = int(val, 16)  # convert hex to decimal
+        m = re.search(r'^\#([\da-f]+)', val, flags=re.I)
+        if m:
+            val = int(m.group(1), 16)  # convert hex to decimal
         elif val in tbl:
             val = tbl[val].val
         elif not re.search(r'^[+-]?\d+$', val):
@@ -310,7 +311,7 @@ def pass1(file, symtbl, memory, buf):
                 error('syntax error')
 
             # store every line in BUF for later use
-            buf.append(f'{label}\t{inst}\t{opr}')
+            buf[__line] = f'{label or " "}\t{inst}\t{opr}'
 
             in_block, address = _pass1(symtbl, memory, buf, in_block, address,
                                        label, inst, opr)
@@ -325,49 +326,42 @@ def pass2(file, symtbl, memory, buf):
         # print object header
         f.write(struct.pack('4sn10x', b'CASL', 0x0000))  # FIXME: use label
         # dump memory image
-        # if opt.a:
-        #     print("CASL LISTING file")
+        if opt.a:
+            print('CASL LISTING file')
+        last_line = None
         for address in sorted(memory.keys()):
-            #__line = memory[address][line]
             val = expand_label(symtbl, memory[address].val)
             f.write(struct.pack('n', val))
+            __line = memory[address].line
 
-        # if $.opt_a:
-        #     if __line != last_line:
-        #       printf "4d 04x 04x", __line, address, val
-        #       print "\t$bufp[__line]\n"
-        #       last_line = __line
-        # else:
-        #       printf "4d      04x", __line, val
-        #       print "\n"
+            if opt.a:
+                if __line != last_line:
+                    print(f'{__line:4} {address:04x} {val:04x} ', end='')
+                    print(buf[__line])
+                    last_line = __line
+                else:
+                    print(f'{__line:4}      {val:04x}')
 
-    # list all symbols
-    # if $.opt_a:
-    #     print "\nDEFINED SYMBOLS\n"
-    #     where
-    #     for (sort keys %symtblp):
-    #         where{symtblp[_][line]} = _
-
-    #     for (sort { a <: b } keys where):
-    #         label = where{_}
-    #         printf("\ts:d:\t04x\ts\n",
-    #              symtblp[label][file],
-    #              symtblp[label][line],
-    #              expand_label(symtblp, label),
-    #              label)
-
+        # list all symbols
+        if opt.a:
+            print('\nDEFINED SYMBOLS')
+            for label in symtbl.keys():
+                print(
+                    f'\t{symtbl[label].file}:{symtbl[label].line}:\t{symtbl[label].val:04x}\t{label}'
+                )
 
 def main():
+    global opt
     opt = getopts('av') or usage()
     if opt.v:
-        print(f"This is CASL, version {VERSION}.\n" 
-            "Copyright (c) 2021, Hiroyuki Ohsaki.\n"
-                "All rights reserved.")
+        print(f"This is CASL, version {VERSION}.\n"
+              "Copyright (c) 2021, Hiroyuki Ohsaki.\n"
+              "All rights reserved.")
         sys.exit(1)
     for file in sys.argv[1:]:
         memory = {}
         symtbl = {}
-        buf = []
+        buf = {}
         global __file
         __file = file
         pass1(file, symtbl, memory, buf)
