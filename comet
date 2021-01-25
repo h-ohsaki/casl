@@ -357,7 +357,7 @@ class Comet:
             self.memory[buf_addr] = c
             buf_addr += 1
         self.state.pc = pc  # go back to the caller
-        self.sate.gr[4] += 1
+        self.state.gr[4] += 1
 
     def exec_out(self):
         """Handler of the OUT system call --- extract two arguments from the
@@ -365,8 +365,8 @@ class Comet:
         debug(f'exec_out({self})')
         pc = self.memory[self.state.gr[4]]
         len_addr = self.memory[self.state.gr[4] + 1]
-        size = self.memory[len_addr]
         buf_addr = self.memory[self.state.gr[4] + 2]
+        size = self.memory[len_addr]
         print('OUT> ', end='')
         for n in range(size):
             c = self.memory[buf_addr + n] & 0xff
