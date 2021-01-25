@@ -25,8 +25,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.3
-DEBUG = False
+VERSION = 0.4
 
 # addresses of IN/OUT/EXI system calls
 SYS_IN = 0xfff0
@@ -148,26 +147,29 @@ Copyright (c) 2021, Hiroyuki Ohsaki.
 All rights reserved.""")
 
     def load(self, file):
-        with open(file, 'rb') as f:
-            print(f'Reading object from {file}...', end='')
+        try:
+            with open(file, 'rb') as f:
+                print(f'Reading object from {file}...', end='')
 
-            # parse the file header
-            header = f.read(16)
-            if header[:4] != b'CASL':
-                die(f'{file}: not a COMET object file')
-            self.state.pc = struct.unpack('>H', header[4:6])[0]
+                # parse the file header
+                header = f.read(16)
+                if header[:4] != b'CASL':
+                    die(f'{file}: not a COMET object file')
+                self.state.pc = struct.unpack('>H', header[4:6])[0]
 
-            # load object into the memory
-            addr = 0
-            while True:
-                buf = f.read(2)
-                if not buf:
-                    break
-                if addr >= STACK_TOP:
-                    die('out of memory')
-                self.memory[addr] = struct.unpack('>H', buf)[0]
-                addr += 1
-            print('done.')
+                # load object into the memory
+                addr = 0
+                while True:
+                    buf = f.read(2)
+                    if not buf:
+                        break
+                    if addr >= STACK_TOP:
+                        die('out of memory')
+                    self.memory[addr] = struct.unpack('>H', buf)[0]
+                    addr += 1
+                print('done.')
+        except FileNotFoundError:
+            warn(f"opening '{file}' failed")
 
     def decode(self, addr=None):
         self.debug(f'decode({self}, {addr})')
@@ -418,11 +420,14 @@ All rights reserved.""")
         # obtain the mnemonic and the operand for the current address
         nemonic, opr, size = self.parse()
 
-        subr = eval(f'Comet.exec_{nemonic}')
-        self.debug(f'exec_{nemonic}({inst:02x}, {gr}, {adr:04x}, {xr}, {eadr:04x})')
-        subr(self, inst, gr, adr, xr, eadr)
-
-        # die(f'illegal instruction {inst:02x} at {pc:04x}')
+        try:
+            subr = eval(f'Comet.exec_{nemonic}')
+            self.debug(
+                f'exec_{nemonic}({inst:02x}, {gr}, {adr:04x}, {xr}, {eadr:04x})'
+            )
+            subr(self, inst, gr, adr, xr, eadr)
+        except AttributeError:
+            die(f'illegal instruction #{inst:02x} at #{self.state.pc:04x}')
 
     # ----------------------------------------------------------------
     def cmd_run(self, *args):
@@ -473,6 +478,7 @@ All rights reserved.""")
         inst, opr, size = self.parse()
         gr = self.state.gr
         fr = self.state.fr
+        fr_bin = f'0{fr:b}' [-2:]
         print(""
               f"PC  #{self.state.pc:04x} [ {inst} {opr} ]\n"
               f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
@@ -480,7 +486,7 @@ All rights reserved.""")
               f"GR2 #{gr[2]:04x} ({signed(gr[2]):6})\n"
               f"GR3 #{gr[3]:04x} ({signed(gr[3]):6}) "
               f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
-              f"FR  {fr:#b} ({fr:6})\n")
+              f"FR  {fr_bin}    ({fr:6})\n")
 
     def cmd_dump(self, *args):
         try:
@@ -507,7 +513,12 @@ All rights reserved.""")
         addr = self.state.gr[4]
         self.cmd_dump(addr)
 
-    def cmd_file(self, file):
+    def cmd_file(self, *args):
+        try:
+            file = args[0]
+        except:
+            warn('usage: file com-file')
+            return
         self.load(file)
 
     def cmd_jump(self, *args):
@@ -569,7 +580,10 @@ q,  quit        Exit comet.""")
         self.cmd_print()
         while True:
             # show prompt and input command from STDIN
-            line = input('comet> ')
+            try:
+                line = input('comet> ')
+            except EOFError:
+                break
             if line == '':
                 line = last_line
             last_line = line
@@ -586,7 +600,6 @@ q,  quit        Exit comet.""")
                     break
             else:
                 print(f"undefined command: '{cmd}'. Try 'help'")
-        pass
 
 def main():
     opt = getopts('qd') or usage()
