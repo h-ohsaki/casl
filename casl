@@ -5,53 +5,56 @@
 # All rights reserved.
 #
 
-import fileinput
+import collections
 import os
 import os.path
 import re
-import subprocess
-import sys
 import struct
+import sys
 
 from perlcompat import die, warn, getopts
 import tbdump
+
+Inst = collections.namedtuple('Inst', ['type', 'code'])
+Label = collections.namedtuple('Label', ['val', 'file', 'line'])
+Word = collections.namedtuple('Word', ['val', 'file', 'line'])
 
 # All valid instructions must have an entry in this hash.  CODE is the
 # object code of the instruction, and TYPE is the type of instruction
 # (e.g., ``op1'' indicates it takes two or three operands).
 INSTTBL = {# COMET instructions
-               'LD'    : { 'code' : 0x10, 'type' : 'op1' },
-               'ST'    : { 'code' : 0x11, 'type' : 'op1' },
-               'LEA'   : { 'code' : 0x12, 'type' : 'op1' },
-               'ADD'   : { 'code' : 0x20, 'type' : 'op1' },
-               'SUB'   : { 'code' : 0x21, 'type' : 'op1' },
-               'AND'   : { 'code' : 0x30, 'type' : 'op1' },
-               'OR'    : { 'code' : 0x31, 'type' : 'op1' },
-               'EOR'   : { 'code' : 0x33, 'type' : 'op1' },
-               'CPA'   : { 'code' : 0x40, 'type' : 'op1' },
-               'CPL'   : { 'code' : 0x41, 'type' : 'op1' },
-               'SLA'   : { 'code' : 0x50, 'type' : 'op1' },
-               'SRA'   : { 'code' : 0x51, 'type' : 'op1' },
-               'SLL'   : { 'code' : 0x52, 'type' : 'op1' },
-               'SRL'   : { 'code' : 0x53, 'type' : 'op1' },
-               'JPZ'   : { 'code' : 0x60, 'type' : 'op2' },
-               'JMI'   : { 'code' : 0x61, 'type' : 'op2' },
-               'JNZ'   : { 'code' : 0x62, 'type' : 'op2' },
-               'JZE'   : { 'code' : 0x63, 'type' : 'op2' },
-               'JMP'   : { 'code' : 0x64, 'type' : 'op2' },
-               'PUSH'  : { 'code' : 0x70, 'type' : 'op2' },
-               'POP'   : { 'code' : 0x71, 'type' : 'op3' },
-               'CALL'  : { 'code' : 0x80, 'type' : 'op2' },
-               'RET'   : { 'code' : 0x81, 'type' : 'op4' },
+               'LD'    : Inst('op1', 0x10),
+               'ST'    : Inst('op1', 0x11),
+               'LEA'   : Inst('op1', 0x12),
+               'ADD'   : Inst('op1', 0x20),
+               'SUB'   : Inst('op1', 0x21),
+               'AND'   : Inst('op1', 0x30),
+               'OR'    : Inst('op1', 0x31),
+               'EOR'   : Inst('op1', 0x33),
+               'CPA'   : Inst('op1', 0x40),
+               'CPL'   : Inst('op1', 0x41),
+               'SLA'   : Inst('op1', 0x50),
+               'SRA'   : Inst('op1', 0x51),
+               'SLL'   : Inst('op1', 0x52),
+               'SRL'   : Inst('op1', 0x53),
+               'JPZ'   : Inst('op2', 0x60),
+               'JMI'   : Inst('op2', 0x61),
+               'JNZ'   : Inst('op2', 0x62),
+               'JZE'   : Inst('op2', 0x63),
+               'JMP'   : Inst('op2', 0x64),
+               'PUSH'  : Inst('op2', 0x70),
+               'POP'   : Inst('op3', 0x71),
+               'CALL'  : Inst('op2', 0x80),
+               'RET'   : Inst('op4', 0x81),
                # pseudo instructions
-               'START' : { 'type' : 'start' },
-               'END'   : { 'type' : 'end' },
-               'DS'    : { 'type' : 'ds' },
-               'DC'    : { 'type' : 'dc' },
+               'START' : Inst('start', None),
+               'END'   : Inst('end',None),
+               'DS'    : Inst('ds' ,None),
+               'DC'    : Inst('dc' ,None),
                # CASL macros
-               'IN'    : { 'type' : 'in' },
-               'OUT'   : { 'type' : 'out' },
-               'EXIT'  : { 'type' : 'exit' },
+               'IN'    : Inst('in'   ,None),
+               'OUT'   : Inst('out'  ,None),
+               'EXIT'  : Inst('exit' ,None),
                }
 
 # addresses of IN/OUT/EXIT system calls --- these MACROs are expanded
@@ -77,7 +80,7 @@ usage: {sys.argv[0]} [-av] file...
 
 def debug(msg):
     if DEBUG:
-        warn(msg)
+        warn(f'{__file}:{__line}: {msg}')
 
 def error(msg):
     die(f'{__file}:{__line}: {msg}')
@@ -89,6 +92,14 @@ def check_label(label):
     if not re.search(r'^[A-Z][0-9A-Za-z]{0,5}$', label):
         error(f'invalid label "{label}"')
 
+# Register a label LABEL in the symbol table HASHREF with the value
+# VAL.  If LABEL is already defined, display error and exit.
+def add_label(tbl, label, val):
+    check_label(label)
+    if label in tbl:
+        error(f'label "{label}" already defined')
+    tbl[label] = Label(val, __file, __line)
+
 # Expand the string VAL to corresponding decimal number --- symbol is
 # resolved and hexadecimal number is converted to decimal.
 def expand_label(tbl, val):
@@ -97,21 +108,13 @@ def expand_label(tbl, val):
         if re.search(r'^\#([\da-f]+)', val, flags=re.I):
             val = int(val, 16)  # convert hex to decimal
         elif val in tbl:
-            val = tbl[val]['val']
+            val = tbl[val].val
         elif not re.search(r'^[+-]?\d+$', val):
             error(f'undefined symbol "{val}"')
         else:
             val = int(val)
     val &= 0xffff
     return val
-
-# Register a label LABEL in the symbol table HASHREF with the value
-# VAL.  If LABEL is already defined, display error and exit.
-def add_label(tbl, label, val):
-    check_label(label)
-    if label in tbl:
-        error(f'label "{label}" already defined')
-    tbl[label] = {'val': val, 'file': __file, 'line': __line}
 
 # Check the validity of decimal number NUMBER.  If not valid, display
 # error and exit.
@@ -127,25 +130,26 @@ def check_register(register):
     debug(f'check_register({register})')
     if register is None:
         return 0
-    m = re.search(r'^(GR)?([0-4])$', register)
+    m = re.search(r'^(GR)([0-4])$', register)
     if not m:
         error(f'invalid register "{register}"')
     return int(m.group(2))
 
-# Generate a one-byte code of VAL at ADDRESS in HASHREF.
-def gen_code1(tbl, address, val):
-    tbl[address] = {'val': val, 'file': __file, 'line': __line}
+# Generate a one-byte code of VAL at ADDRESS in MEMORY.
+def gen_code1(memory, address, val):
+    debug(f'gen_code1(memory, {address:04x}, {val})')
+    memory[address] = Word(val, __file, __line)
 
 # Generate two-byte codes from CODE, GR, ADR, and XR at ADDRESS in
-# HASHREF.
+# MEMORY.
 def gen_code2(memory, address, code, gr, adr, xr):
     gr = check_register(gr)
     xr = check_register(xr)
     val = (code << 8) + (gr << 4) + xr
     address += 1
-    memory[address] = {'val': val, 'file': __file, 'line': __line}
+    gen_code1(memory, address, val)
     address += 1
-    memory[address] = {'val': adr, 'file': __file, 'line': __line}
+    gen_code1(memory, address, adr)
 
 def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
     # register label to the symbol table
@@ -157,7 +161,7 @@ def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
         if not inst in INSTTBL:
             error(f'illegal instruction "{inst}"')
 
-        type_ = INSTTBL[inst]['type']
+        type_ = INSTTBL[inst].type
         if opr:
             opr = re.split(r'[,\s]+', opr)
             noprs = len(opr)
@@ -179,7 +183,7 @@ def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
         if type_ == 'op1':
             if not (2 <= noprs <= 3):
                 error(f'invalid operand {opr}')
-            gen_code2(memory, address, INSTTBL[inst]['code'], opr[0], opr[1],
+            gen_code2(memory, address, INSTTBL[inst].code, opr[0], opr[1],
                       opr[2])
             address += 2
 
@@ -187,7 +191,7 @@ def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
         elif type_ == 'op2':
             if not (1 <= noprs <= 2):
                 error(f'invalid operand {opr}')
-            gen_code2(memory, address, INSTTBL[inst]['code'], None, opr[0],
+            gen_code2(memory, address, INSTTBL[inst].code, None, opr[0],
                       opr[1])
             address += 2
 
@@ -195,15 +199,14 @@ def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
         elif type_ == 'op3':
             if noprs != 1:
                 error(f'invalid operand "{opr}"')
-            gen_code2(memory, address, INSTTBL[inst]['code'], opr[0], None,
-                      None)
+            gen_code2(memory, address, INSTTBL[inst].code, opr[0], None, None)
             address += 2
 
         # instructions without operand
         elif type_ == 'op4':
             if noprs > 0:
                 error(f'invalid operand "{opr}"')
-            gen_code2(memory, address, INSTTBL[inst]['code'], None, None, None)
+            gen_code2(memory, address, INSTTBL[inst].code, None, None, None)
             address += 2
 
         # START instruction
@@ -254,13 +257,14 @@ def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
             # IN/OUT macro is expanded to push two operands onto the
             # stack, call SYS_IN / SYS_OUT, and restore stack.
             entry = SYS_IN if type_ == 'in' else SYS_OUT
-            gen_code2(memory, address, INSTTBL['PUSH']['code'], None, opr[0],
+            gen_code2(memory, address, INSTTBL['PUSH'].code, None, opr[0],
                       None)
-            gen_code2(memory, address + 2, INSTTBL['PUSH']['code'], None,
-                      opr[1], None)
-            gen_code2(memory, address + 4, INSTTBL['CALL']['code'], None,
-                      entry, None)
-            gen_code2(memory, address + 6, INSTTBL['LEA']['code'], 'GR4', 2, 'GR4')
+            gen_code2(memory, address + 2, INSTTBL['PUSH'].code, None, opr[1],
+                      None)
+            gen_code2(memory, address + 4, INSTTBL['CALL'].code, None, entry,
+                      None)
+            gen_code2(memory, address + 6, INSTTBL['LEA'].code, 'GR4', 2,
+                      'GR4')
             address += 8
 
         # EXIT macro
@@ -268,7 +272,7 @@ def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
             if noprs > 0:
                 error(f'invalid operand "{opr}"')
             # EXIT macro is replaced with 'JMP SYS_EXIT'
-            gen_code2(memory, address, INSTTBL['JMP']['code'], None, SYS_EXIT,
+            gen_code2(memory, address, INSTTBL['JMP'].code, None, SYS_EXIT,
                       None)
             address += 2
         else:
@@ -323,9 +327,9 @@ def pass2(file, symtbl, memory, buf):
         # dump memory image
         # if opt.a:
         #     print("CASL LISTING file")
-        for address, elem in enumerate(memory):
+        for address in sorted(memory.keys()):
             #__line = memory[address][line]
-            val = expand_label(symtbl, memory[address]['val'])
+            val = expand_label(symtbl, memory[address].val)
             f.write(struct.pack('n', val))
 
         # if $.opt_a:
@@ -361,10 +365,9 @@ def pass2(file, symtbl, memory, buf):
 def main():
     opt = getopts('av') or usage()
     for file in sys.argv[1:]:
-        memory = [{'val': 0} for _ in range(0x10000)]
+        memory = {}
         symtbl = {}
         buf = []
-
         global __file
         __file = file
         pass1(file, symtbl, memory, buf)
