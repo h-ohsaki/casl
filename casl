@@ -197,6 +197,9 @@ class Memory:
         self[addr + 1] = adr
 
 # ----------------------------------------------------------------
+class Assembler:
+    def __init__(self):
+
 def remove_comment(line):
     # remove comment --- take care of ``;'' between single quotes.
     m = re.search(r"(^[^;]*'[^']*'.*?);.*$", line)
