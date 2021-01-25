@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+#
+# A simple implementation of CASL assembler.
+# Copyright (c) 1997-2000, Hiroyuki Ohsaki.
+# All rights reserved.
+#
+
+import fileinput
+import os
+import os.path
+import re
+import subprocess
+import sys
+import struct
+
+from perlcompat import die, warn, getopts
+import tbdump
+
+# All valid instructions must have an entry in this hash.  CODE is the
+# object code of the instruction, and TYPE is the type of instruction
+# (e.g., ``op1'' indicates it takes two or three operands).
+INSTTBL = {# COMET instructions
+               'LD'    : { 'code' : 0x10, 'type' : 'op1' },
+               'ST'    : { 'code' : 0x11, 'type' : 'op1' },
+               'LEA'   : { 'code' : 0x12, 'type' : 'op1' },
+               'ADD'   : { 'code' : 0x20, 'type' : 'op1' },
+               'SUB'   : { 'code' : 0x21, 'type' : 'op1' },
+               'AND'   : { 'code' : 0x30, 'type' : 'op1' },
+               'OR'    : { 'code' : 0x31, 'type' : 'op1' },
+               'EOR'   : { 'code' : 0x33, 'type' : 'op1' },
+               'CPA'   : { 'code' : 0x40, 'type' : 'op1' },
+               'CPL'   : { 'code' : 0x41, 'type' : 'op1' },
+               'SLA'   : { 'code' : 0x50, 'type' : 'op1' },
+               'SRA'   : { 'code' : 0x51, 'type' : 'op1' },
+               'SLL'   : { 'code' : 0x52, 'type' : 'op1' },
+               'SRL'   : { 'code' : 0x53, 'type' : 'op1' },
+               'JPZ'   : { 'code' : 0x60, 'type' : 'op2' },
+               'JMI'   : { 'code' : 0x61, 'type' : 'op2' },
+               'JNZ'   : { 'code' : 0x62, 'type' : 'op2' },
+               'JZE'   : { 'code' : 0x63, 'type' : 'op2' },
+               'JMP'   : { 'code' : 0x64, 'type' : 'op2' },
+               'PUSH'  : { 'code' : 0x70, 'type' : 'op2' },
+               'POP'   : { 'code' : 0x71, 'type' : 'op3' },
+               'CALL'  : { 'code' : 0x80, 'type' : 'op2' },
+               'RET'   : { 'code' : 0x81, 'type' : 'op4' },
+               # pseudo instructions
+               'START' : { 'type' : 'start' },
+               'END'   : { 'type' : 'end' },
+               'DS'    : { 'type' : 'ds' },
+               'DC'    : { 'type' : 'dc' },
+               # CASL macros
+               'IN'    : { 'type' : 'in' },
+               'OUT'   : { 'type' : 'out' },
+               'EXIT'  : { 'type' : 'exit' },
+               }
+
+# addresses of IN/OUT/EXIT system calls --- these MACROs are expanded
+# to call this address after pushing its arguments on stack.
+SYS_IN = 0xfff0
+SYS_OUT = 0xfff2
+SYS_EXIT = 0xfff4
+
+VERSION = 0.1
+DEBUG = 1
+
+# global variables of currently processing file and line number.
+# These variables are used in &error.
+__file = None
+__line = None
+
+def usage():
+    die(f"""\
+usage: {sys.argv[0]} [-av] file...
+ -a          turn on verbose listings
+ -v          display version and exit
+""")
+
+def debug(msg):
+    if DEBUG:
+        warn(msg)
+
+def error(msg):
+    die(f'{__file}:{__line}: {msg}')
+
+# Check the validity of label LABEL.  If not valid, display error and
+# exit.
+def check_label(label):
+    debug(f'check_label({label})')
+    if not re.search(r'^[A-Z][0-9A-Za-z]{0,5}$', label):
+        error(f'invalid label "{label}"')
+
+# Expand the string VAL to corresponding decimal number --- symbol is
+# resolved and hexadecimal number is converted to decimal.
+def expand_label(tbl, val):
+    debug(f'expand_label(tbl, {val})')
+    if type(val) == str:
+        if re.search(r'^\#([\da-f]+)', val, flags=re.I):
+            val = int(val, 16)  # convert hex to decimal
+        elif val in tbl:
+            val = tbl[val]['val']
+        elif not re.search(r'^[+-]?\d+$', val):
+            error(f'undefined symbol "{val}"')
+        else:
+            val = int(val)
+    val &= 0xffff
+    return val
+
+# Register a label LABEL in the symbol table HASHREF with the value
+# VAL.  If LABEL is already defined, display error and exit.
+def add_label(tbl, label, val):
+    check_label(label)
+    if label in tbl:
+        error(f'label "{label}" already defined')
+    tbl[label] = {'val': val, 'file': __file, 'line': __line}
+
+# Check the validity of decimal number NUMBER.  If not valid, display
+# error and exit.
+def check_decimal(number):
+    debug(f'check_decimal({number})')
+    if not re.search(r'^[+-]?\d+$', number):
+        error(f'"{number}" must be decimal')
+    return int(number)
+
+# Check the validity of register REGISTER.  Return the register number
+# (0 - 4). If not valid, display error and exit.  Otherwise,
+def check_register(register):
+    debug(f'check_register({register})')
+    if register is None:
+        return 0
+    m = re.search(r'^(GR)?([0-4])$', register)
+    if not m:
+        error(f'invalid register "{register}"')
+    return int(m.group(2))
+
+# Generate a one-byte code of VAL at ADDRESS in HASHREF.
+def gen_code1(tbl, address, val):
+    tbl[address] = {'val': val, 'file': __file, 'line': __line}
+
+# Generate two-byte codes from CODE, GR, ADR, and XR at ADDRESS in
+# HASHREF.
+def gen_code2(memory, address, code, gr, adr, xr):
+    gr = check_register(gr)
+    xr = check_register(xr)
+    val = (code << 8) + (gr << 4) + xr
+    address += 1
+    memory[address] = {'val': val, 'file': __file, 'line': __line}
+    address += 1
+    memory[address] = {'val': adr, 'file': __file, 'line': __line}
+
+def _pass1(symtbl, memory, buf, in_block, address, label, inst, opr):
+    # register label to the symbol table
+    if label:
+        add_label(symtbl, label, address)
+
+    # generate object code according the type of instruction
+    if inst:
+        if not inst in INSTTBL:
+            error(f'illegal instruction "{inst}"')
+
+        type_ = INSTTBL[inst]['type']
+        if opr:
+            opr = re.split(r'[,\s]+', opr)
+            noprs = len(opr)
+        else:
+            opr = None, None, None
+            noprs = 0
+        while len(opr) < 3:
+            opr.append(None)
+
+        # START must be the first instruction
+        if not in_block and type_ != 'start':
+            error(f'No "START" instruction found')
+
+        # GR0 cannot be used as an index register.
+        if opr[2] and re.search(r'^(GR)?0$', opr[2]):
+            error("Can't use GR0 as an index register")
+
+        # instructions with GR, adr, and optional XR
+        if type_ == 'op1':
+            if not (2 <= noprs <= 3):
+                error(f'invalid operand {opr}')
+            gen_code2(memory, address, INSTTBL[inst]['code'], opr[0], opr[1],
+                      opr[2])
+            address += 2
+
+        # instructions with adr, and optional XR
+        elif type_ == 'op2':
+            if not (1 <= noprs <= 2):
+                error(f'invalid operand {opr}')
+            gen_code2(memory, address, INSTTBL[inst]['code'], None, opr[0],
+                      opr[1])
+            address += 2
+
+        # instructions only with optional GR
+        elif type_ == 'op3':
+            if noprs != 1:
+                error(f'invalid operand "{opr}"')
+            gen_code2(memory, address, INSTTBL[inst]['code'], opr[0], None,
+                      None)
+            address += 2
+
+        # instructions without operand
+        elif type_ == 'op4':
+            if noprs > 0:
+                error(f'invalid operand "{opr}"')
+            gen_code2(memory, address, INSTTBL[inst]['code'], None, None, None)
+            address += 2
+
+        # START instruction
+        elif type_ == 'start':
+            if not label:
+                error('no label found at START')
+            # FIXME: memory[-1] = opr[0] if len(opr) else 0
+            in_block = 1
+
+        # END instruction
+        elif type_ == 'end':
+            if label:
+                error('can\'t use label "{label}" at END')
+            if noprs > 0:
+                error(f'invalid operand "{opr}"')
+            in_block = 0
+
+        # DS instruction
+        elif type_ == 'ds':
+            if noprs != 1:
+                error(f'invalid operand "{opr}"')
+            v = check_decimal(opr[0])
+            for n in range(v):
+                gen_code1(memory, address, 0)
+                address += 1
+
+        # DC instruction
+        elif type_ == 'dc':
+            m = re.search(r"^'([^\']+)'$", opr[0])
+            if m:
+                vals = bytearray(m.group(1), encoding='utf-8')
+                for _ in vals:
+                    gen_code1(memory, address, _)
+                    address += 1
+            elif noprs == 1:  # number or label
+                gen_code1(memory, address, opr[0])
+                address += 1
+            else:
+                error(f'invalid operand "{opr}"')
+
+        # IN/OUT macro
+        elif type_ == 'in' or type_ == 'out':
+            if noprs != 2:
+                error(f'invalid operand "{opr}"')
+            # two operands must be labels, not numbers
+            check_label(opr[0])
+            check_label(opr[1])
+            # IN/OUT macro is expanded to push two operands onto the
+            # stack, call SYS_IN / SYS_OUT, and restore stack.
+            entry = SYS_IN if type_ == 'in' else SYS_OUT
+            gen_code2(memory, address, INSTTBL['PUSH']['code'], None, opr[0],
+                      None)
+            gen_code2(memory, address + 2, INSTTBL['PUSH']['code'], None,
+                      opr[1], None)
+            gen_code2(memory, address + 4, INSTTBL['CALL']['code'], None,
+                      entry, None)
+            gen_code2(memory, address + 6, INSTTBL['LEA']['code'], 'GR4', 2, 'GR4')
+            address += 8
+
+        # EXIT macro
+        elif type_ == 'exit':
+            if noprs > 0:
+                error(f'invalid operand "{opr}"')
+            # EXIT macro is replaced with 'JMP SYS_EXIT'
+            gen_code2(memory, address, INSTTBL['JMP']['code'], None, SYS_EXIT,
+                      None)
+            address += 2
+        else:
+            error(f'instruction type "{type_}" is not implemented')
+    return in_block, address
+
+# Parse the source file FILE, register all symbols to SYMTBL,
+# and generate code in MEMORY.
+def pass1(file, symtbl, memory, buf):
+    with open(file) as f:
+        address = 0
+        global __line
+        in_block = None
+        for __line, line in enumerate(f):
+            line = line.rstrip()
+            debug(f'{__line}: {line}')
+
+            # remove comment --- take care of ``;'' between single quotes.
+            m = re.search(r"(^[^;]*'[^']*'.*?);.*$", line)
+            if m:
+                line = m.group(1)
+            line = re.sub(r';.*$', '', line)
+            # remove trailing spaces
+            line = re.sub(r'\s+$', '', line)
+            # skip to next line if neither label nor instruction is specified.
+            if line == '':
+                continue
+
+            # extract each field
+            m = re.search(r'^(\S+)?\s+([A-Z]+)(\s+(.*)?)?$', line)
+            if m:
+                label, inst, opr = m.group(1), m.group(2), m.group(4)
+                debug(f'label/inst/opr = {label}/{inst}/{opr}')
+            else:
+                error('syntax error')
+
+            # store every line in BUF for later use
+            buf.append(f'{label}\t{inst}\t{opr}')
+
+            in_block, address = _pass1(symtbl, memory, buf, in_block, address,
+                                       label, inst, opr)
+        if in_block:
+            error('no "END" instruction found')
+
+# Open the output file, and dump the assembled object code.
+def pass2(file, symtbl, memory, buf):
+    base = os.path.basename(file)
+    outfile = f'{base}.com'
+    with open(outfile, 'wb') as f:
+        # print object header
+        f.write(struct.pack('4sn10x', b'CASL', 0x0000))  # FIXME: use label
+        # dump memory image
+        # if opt.a:
+        #     print("CASL LISTING file")
+        for address, elem in enumerate(memory):
+            #__line = memory[address][line]
+            val = expand_label(symtbl, memory[address]['val'])
+            f.write(struct.pack('n', val))
+
+        # if $.opt_a:
+        #     if __line != last_line:
+        #       printf "4d 04x 04x", __line, address, val
+        #       print "\t$bufp[__line]\n"
+        #       last_line = __line
+        # else:
+        #       printf "4d      04x", __line, val
+        #       print "\n"
+
+    # list all symbols
+    # if $.opt_a:
+    #     print "\nDEFINED SYMBOLS\n"
+    #     where
+    #     for (sort keys %symtblp):
+    #         where{symtblp[_][line]} = _
+
+    #     for (sort { a <: b } keys where):
+    #         label = where{_}
+    #         printf("\ts:d:\t04x\ts\n",
+    #              symtblp[label][file],
+    #              symtblp[label][line],
+    #              expand_label(symtblp, label),
+    #              label)
+
+# if $.opt_v:
+#     print "This is CASL, version VERSION.\n"
+#     print "Copyright (c) 1997-1998, Hiroyuki Ohsaki.\n"
+#     print "All rights reserved.\n"
+#     exit 0
+
+def main():
+    opt = getopts('av') or usage()
+    for file in sys.argv[1:]:
+        memory = [{'val': 0} for _ in range(0x10000)]
+        symtbl = {}
+        buf = []
+
+        global __file
+        __file = file
+        pass1(file, symtbl, memory, buf)
+        pass2(file, symtbl, memory, buf)
+
+if __name__ == "__main__":
+    main()
