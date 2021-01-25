@@ -5,6 +5,19 @@
 # All rights reserved.
 #
 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import collections
 import re
 import struct
@@ -41,30 +54,30 @@ Command = collections.namedtuple('Command', ['regexp', 'subr', 'need_print'])
 # having two keys: ID is the mnemonic of the instruction, and TYPE is
 # the type of it.
 INSTTBL = {
-               0x10 : Inst('op1', 'LD'  ),
-               0x11 : Inst('op1', 'ST'  ),
-               0x12 : Inst('op1', 'LEA' ),
-               0x20 : Inst('op1', 'ADD' ),
-               0x21 : Inst('op1', 'SUB' ),
-               0x30 : Inst('op1', 'AND' ),
-               0x31 : Inst('op1', 'OR'  ),
-               0x33 : Inst('op1', 'EOR' ),
-               0x40 : Inst('op1', 'CPA' ),
-               0x41 : Inst('op1', 'CPL' ),
-               0x50 : Inst('op1', 'SLA' ),
-               0x51 : Inst('op1', 'SRA' ),
-               0x52 : Inst('op1', 'SLL' ),
-               0x53 : Inst('op1', 'SRL' ),
-               0x60 : Inst('op2', 'JPZ' ),
-               0x61 : Inst('op2', 'JMI' ),
-               0x62 : Inst('op2', 'JNZ' ),
-               0x63 : Inst('op2', 'JZE' ),
-               0x64 : Inst('op2', 'JMP' ),
-               0x70 : Inst('op2', 'PUSH'),
-               0x71 : Inst('op3', 'POP' ),
-               0x80 : Inst('op2', 'CALL'),
-               0x81 : Inst('op4', 'RET' ),
-               }
+    0x10: Inst('op1', 'LD'),
+    0x11: Inst('op1', 'ST'),
+    0x12: Inst('op1', 'LEA'),
+    0x20: Inst('op1', 'ADD'),
+    0x21: Inst('op1', 'SUB'),
+    0x30: Inst('op1', 'AND'),
+    0x31: Inst('op1', 'OR'),
+    0x33: Inst('op1', 'EOR'),
+    0x40: Inst('op1', 'CPA'),
+    0x41: Inst('op1', 'CPL'),
+    0x50: Inst('op1', 'SLA'),
+    0x51: Inst('op1', 'SRA'),
+    0x52: Inst('op1', 'SLL'),
+    0x53: Inst('op1', 'SRL'),
+    0x60: Inst('op2', 'JPZ'),
+    0x61: Inst('op2', 'JMI'),
+    0x62: Inst('op2', 'JNZ'),
+    0x63: Inst('op2', 'JZE'),
+    0x64: Inst('op2', 'JMP'),
+    0x70: Inst('op2', 'PUSH'),
+    0x71: Inst('op3', 'POP'),
+    0x80: Inst('op2', 'CALL'),
+    0x81: Inst('op4', 'RET'),
+}
 
 def usage():
     die(f"""\
@@ -82,31 +95,31 @@ def signed(val):
 def unsigned(val):
     return struct.unpack('>H', struct.pack('>h', val))[0]
 
-def check_number(val):
-    try:
-        if re.search(r'^[-+]?\d+$', val) or re.search(r'^#[\da-zA-Z]+$', val):
-            return True
-    except TypeError:
-        return False
-
-def expand_number(val):
-    if check_number(val):
-        m = re.search(r'^#(.+)$', val)
-        if m:
-            val = int(val, 16)  # convert hex to decimal
-        return val & 0xffff 	# truncate to 16 bits
-    else:
-        return None
+def parse_number(v):
+    if type(v) == int:
+        return int(v) & 0xffff
+    elif type(v) == str:
+        if re.search(r'^[-+]?\d+$', v):
+            return int(v) & 0xffff
+        else:
+            m = re.search(r'^#([\da-zA-Z]+)$', v)
+            if m:
+                # convert hex to decimal
+                return int(m.group(1), base=16) & 0xffff
+    return None
 
 # ----------------------------------------------------------------
 class Memory:
     def __init__(self):
         self._memory = [0] * 0x10000
         self.clear()
+
     def __setitem__(self, addr, val):
         self._memory[addr] = val
+
     def __getitem__(self, addr):
         return self._memory[addr]
+
     def clear(self):
         for addr in range(0x10000):
             self[addr] = 0
@@ -121,7 +134,7 @@ class Comet:
     def __init__(self):
         self.memory = Memory()
         self.state = State()
-        self.bp = []
+        self.breakpoints = []
 
     def __repr__(self):
         return f'Comet({self.state.pc:04x}, {self.state.gr[0]:02x}, {self.state.gr[1]:02x}, {self.state.gr[2]:02x}, {self.state.gr[3]:02x}, {self.state.gr[4]:02x} {self.state.fr:#b})'
@@ -172,7 +185,7 @@ class Comet:
             nemonic = 'DC'
             opr = f'#{word:04x}'
             size = 1
-    
+
         # for IN/OUT/EXIT system calls
         if addr == SYS_IN:
             nemonic, opr = 'IN', 'SYSTEM CALL'
@@ -183,7 +196,7 @@ class Comet:
         elif addr == SYS_EXIT:
             nemonic, opr = 'EXIT', 'SYSTEM CALL'
             size = 2
-    
+
         return nemonic, opr, size
 
     def update_fr(self, val):
@@ -193,22 +206,22 @@ class Comet:
             self.state.fr = FR_ZERO
         else:
             self.state.fr = FR_PLUS
-    
+
     def step_exec(self):
         """Execute one instruction from the PC --- evaluate the intruction,
         update registers, and advance the PC by the instruction's size."""
         debug(f'step_exec({self})')
-        pc = self.state.pc	# to be updated
-        fr = self.state.fr	# read-only
-        regs = self.state.gr	# alias
-    
+        pc = self.state.pc  # to be updated
+        fr = self.state.fr  # read-only
+        regs = self.state.gr  # alias
+
         # calcurate the effective address
         word, inst, gr, adr, xr = self.decode(pc)
         eadr = adr
         if 1 <= xr <= 4:
             eadr += regs[xr]
         eadr &= 0xffff
-    
+
         # obtain the mnemonic and the operand for the current address
         nemonic, opr, size = self.parse()
         if nemonic == 'IN':
@@ -310,7 +323,7 @@ class Comet:
             pc = eadr
         elif nemonic == 'PUSH':
             regs[4] -= 1
-            self.memory[regs[4]] =eadr
+            self.memory[regs[4]] = eadr
             pc += 2
         elif nemonic == 'POP':
             regs[gr] = self.memory[regs[4]]
@@ -327,7 +340,7 @@ class Comet:
             die(f'illegal instruction {inst:02x} at {pc:04x}')
 
         self.state.pc = pc
-    
+
     def exec_in(self):
         """Handler of the IN system call --- extract two arguments from the
     stack, read a line from STDIN, store it in specified place."""
@@ -343,7 +356,7 @@ class Comet:
             buf_addr += 1
         self.state.pc = pc  # go back to the caller
         self.sate.gr[4] += 1
-    
+
     def exec_out(self):
         """Handler of the OUT system call --- extract two arguments from the
     stack, write a string to STDOUT."""
@@ -366,7 +379,7 @@ def cmd_run(comet, *args):
     while True:
         comet.step_exec()
         # check the PC is at one of breakpoints
-        for n, addr in enumerate(comet.bp):
+        for n, addr in enumerate(comet.breakpoints):
             if comet.state.pc == addr:
                 print(f'Breakpoint {n}, #{addr:04x}')
                 return
@@ -374,7 +387,7 @@ def cmd_run(comet, *args):
 def cmd_step(comet, *args):
     debug(f'cmd_step({comet}, {args})')
     try:
-        count = expand_number(args[0])
+        count = parse_number(args[0])
     except IndexError:
         count = 1
     for n in range(count):
@@ -383,30 +396,30 @@ def cmd_step(comet, *args):
 def cmd_break(comet, *args):
     debug(f'cmd_break({comet}, {args})')
     try:
-        addr = expand_number(args[0])
+        addr = parse_number(args[0])
         if addr is not None:
-            comet.bp.append(addr)
+            comet.breakpoints.append(addr)
         else:
-            warn(f'invalid breakpoint address')
+            warn(f'invalid breakpoint address "{args[0]}"')
     except IndexError:
         pass
 
 def cmd_delete(comet, *args):
     debug(f'cmd_delete({comet}, {args})')
     try:
-        n = expand_number(args[0])
+        n = parse_number(args[0])
         if n is not None:
-            del comet.bp[n - 1]
+            del comet.breakpoints[n - 1]
         else:
             resp = input('Delete all breakpoints? (y or n) ')
             if re.search(r'^[yY]', resp):
-                comet.bp.clear()
+                comet.breakpoints.clear()
     except IndexError:
         pass
 
 def cmd_info(comet, *args):
     debug(f'cmd_info({comet}, {args})')
-    for n, addr in enumerate(comet.bp):
+    for n, addr in enumerate(comet.breakpoints):
         print(f'{n}: #{addr:04x}')
 
 def cmd_print(comet, *args):
@@ -416,23 +429,23 @@ def cmd_print(comet, *args):
     gr = comet.state.gr
     fr = comet.state.fr
     print(""
-        f"PC  #{comet.state.pc:04x} [ {inst} {opr} ]\n"
-            f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
-f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
-f"GR2 #{gr[2]:04x} ({signed(gr[2]):6})\n"
-f"GR3 #{gr[3]:04x} ({signed(gr[3]):6}) "
-f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
-f"FR  {fr:#b} ({fr:6})\n")
+          f"PC  #{comet.state.pc:04x} [ {inst} {opr} ]\n"
+          f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
+          f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
+          f"GR2 #{gr[2]:04x} ({signed(gr[2]):6})\n"
+          f"GR3 #{gr[3]:04x} ({signed(gr[3]):6}) "
+          f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
+          f"FR  {fr:#b} ({fr:6})\n")
 
 def cmd_dump(comet, *args):
     debug(f'cmd_dump({comet}, {args})')
     try:
-        addr = expand_number(args[0])
+        addr = parse_number(args[0])
     except IndexError:
         addr = comet.state.pc
     for row in range(16):
         base = addr + (row << 3)
-        print(f'{base:04x}')
+        print(f'{base:04x}', end='')
         for col in range(8):
             v = comet.memory[base + col]
             print(f' {v:04x}', end='')
@@ -477,30 +490,30 @@ def cmd_file(comet, file):
 def cmd_jump(comet, *args):
     debug(f'cmd_jump({comet}, {args})')
     try:
-        addr = expand_number(args[0])
+        addr = parse_number(args[0])
         if addr is not None:
-            comet.state.pc = expand_number(addr)
+            comet.state.pc = parse_number(addr)
         else:
             warn(f'invalid jump address "{args[0]}"')
     except IndexError:
         pass
 
-def cmd_memory(comet, state, *args):
+def cmd_memory(comet, *args):
     debug(f'cmd_memory({comet}, {args})')
     try:
-        addr = expand_number(args[0])
-        val = expand_number(args[1])
+        addr = parse_number(args[0])
+        val = parse_number(args[1])
         if addr is not None and val is not None:
             comet.memory[addr] = val
         else:
             warn('invalid address "{args[0]}" or value "{args[1]}"')
     except IndexError:
-        pass
+        warn('memory command needs address and value')
 
 def cmd_disasm(comet, *args):
     debug(f'cmd_disasm({comet}, {args})')
     try:
-        addr = expand_number(args[0])
+        addr = parse_number(args[0])
     except IndexError:
         addr = comet.state.pc
     for n in range(16):
@@ -532,22 +545,23 @@ def cmd_quit(comet, *args):
     sys.exit(1)
 
 CMDTBL = [
-Command('r|run', cmd_run, True),
-Command('s|step', cmd_step,  True),
-Command('b|break', cmd_break,  False),
-Command('de|del', cmd_delete,  False),
-Command('i|info', cmd_info,  False),
-Command('p|print', cmd_print,  False),
-Command('du|dump', cmd_dump,  False),
-Command('st|stack', cmd_stack,  False),
-Command('f|file', cmd_file,  True),
-Command('j|jump', cmd_jump,  True),
-Command('m|memory', cmd_memory,  True),
-Command('di|disasm', cmd_disasm,  False),
-Command('h|help', cmd_help,  False),
-Command('q|quit', cmd_quit, False),
+    Command('de|del', cmd_delete, False),
+    Command('du|dump', cmd_dump, False),
+    Command('b|break', cmd_break, False),
+    Command('di|disasm', cmd_disasm, False),
+    Command('f|file', cmd_file, True),
+    Command('h|\?|help', cmd_help, False),
+    Command('i|info', cmd_info, False),
+    Command('j|jump', cmd_jump, True),
+    Command('m|memory', cmd_memory, True),
+    Command('p|print', cmd_print, False),
+    Command('q|quit', cmd_quit, False),
+    Command('r|run', cmd_run, True),
+    Command('st|stack', cmd_stack, False),
+    Command('s|step', cmd_step, True),
 ]
 
+# ----------------------------------------------------------------
 def parse_options(opt):
     if not opt.q:
         print(f"""\
@@ -586,7 +600,7 @@ def main():
                     cmd_print(comet)
                 break
         else:
-            print('undefined command: "{cmd}". Try "help"')
+            print(f'undefined command: "{cmd}". Try "help"')
 
 if __name__ == "__main__":
     main()
