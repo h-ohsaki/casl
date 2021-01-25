@@ -193,7 +193,8 @@ class Memory:
         size = len(self.src)
         if size < addr + 1:
             self.src.extend([None] * (addr + 1 - size))
-        self.src[addr] = self.assembler.file, self.assembler.lineno, self.assembler.line
+        self.src[
+            addr] = self.assembler.file, self.assembler.lineno, self.assembler.line
 
     def __getitem__(self, addr):
         return self.memory[addr]
@@ -373,6 +374,8 @@ All rights reserved."""
             entry = SYS_IN
         else:
             entry = SYS_OUT
+        self.memory.generate_code(self.addr, INSTTBL['PUSH'][1], None,
+                                  inst.opr1, None)
         self.memory.generate_code(self.addr + 2, INSTTBL['PUSH'][1], None,
                                   inst.opr2, None)
         self.memory.generate_code(self.addr + 4, INSTTBL['CALL'][1], None,
@@ -434,7 +437,7 @@ All rights reserved."""
         outfile = f'{base}.com'
         with open(outfile, 'wb') as f:
             # print object header
-            f.write(struct.pack('4sn10x', b'CASL', self.start_addr))
+            f.write(struct.pack('>4sH10x', b'CASL', self.start_addr))
             # dump memory image
             for addr, val in enumerate(self.memory):
                 val = self.labeltbl.expand(val)
@@ -460,7 +463,7 @@ All rights reserved."""
         for label in self.labeltbl.keys():
             file, lineno = self.labeltbl.src_for(label)
             val = self.labeltbl[label]
-            print( f'\t{file}:{lineno}:\t{val:04x}\t{label}' )
+            print(f'\t{file}:{lineno}:\t{val:04x}\t{label}')
 
 def main():
     opt = getopts('avd') or usage()
