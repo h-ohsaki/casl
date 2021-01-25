@@ -16,7 +16,7 @@ from perlcompat import die, warn, getopts
 import tbdump
 
 VERSION = 0.1
-DEBUG = 0
+DEBUG = False
 
 # addresses of IN/OUT/EXIT system calls --- these MACROs are expanded
 # to call this address after pushing its arguments on stack.
@@ -78,7 +78,7 @@ __lineno = None
 
 def debug(msg):
     if DEBUG:
-        warn(f'{__file}:{__lineno}: {msg}')
+        warn(f'** {__file}:{__lineno}: {msg}')
 
 def error(msg):
     die(f'{__file}:{__lineno}: {msg}')
@@ -110,6 +110,9 @@ class LabelTable:
     def __init__(self):
         self.tbl = {}
         self.location = {}
+
+    def __repr__(self):
+        return 'LabelTable()'
 
     def __setitem__(self, label, val):
         self.tbl[label] = val
@@ -149,24 +152,25 @@ class LabelTable:
 class Memory:
     def __init__(self):
         self.memory = [None] * 0x10000
-        self.location = [None] * 0x10000
-        self.lines = [None] * 0x10000
+        self.src = [None] * 0x10000
+
+    def __repr__(self):
+        return 'Memory()'
 
     def __setitem__(self, addr, val):
         self.memory[addr] = val
-        self.location[addr] = '__file, __lineno'
 
     def __getitem__(self, addr):
         return self.memory[addr]
 
-    def set_line_at(self, addr, line):
-        size = len(self.lines)
+    def set_src_at(self, addr, line):
+        size = len(self.src)
         if size < addr:
-            self.lines.extend([''] * (addr - size))
-        self.lines[addr] = line
+            self.src.extend([None] * (addr - size))
+        self.src[addr] = 'foo', 123, line
 
-    def get_line_at(self, addr):
-        return self.lines[addr]
+    def get_src_at(self, addr):
+        return self.src[addr]
 
     def _register_number(self, reg):
         """Check the validity of register REG.  Return the register
@@ -181,6 +185,7 @@ class Memory:
 
     def generate_code(self, addr, inst, gr, adr, xr):
         """Generate two-word code from INST, GR, ADR, and XR at ADDRESS."""
+        debug(f'generate_code({self}, {addr:04x}, {inst:02x}, {gr}, {adr}, {xr})')
         gr = self._register_number(gr)
         xr = self._register_number(xr)
         val = (inst << 8) + (gr << 4) + xr
@@ -336,7 +341,7 @@ def pass1(file, labeltbl, memory):
             else:
                 error('syntax error')
             # save the line for later use
-            memory.set_line_at(addr, f'{label or " "}\t{inst}\t{opr}')
+            memory.set_src_at(addr, f'{label or " "}\t{inst}\t{opr}')
 
             # register label to the symbol table
             if label:
@@ -358,7 +363,7 @@ def pass2(file, labeltbl, memory, show_listing):
         if show_listing:
             print('CASL LISTING file')
         last_line = None
-        for addr in sorted(memory.keys()):
+        for addr in memory:
             val = labeltbl.expand(memory[addr])
             f.write(struct.pack('n', val))
             __lineno = memory[addr].line
@@ -366,7 +371,7 @@ def pass2(file, labeltbl, memory, show_listing):
             if show_listing:
                 if __lineno != last_line:
                     print(f'{__lineno:4} {addr:04x} {val:04x} ', end='')
-                    print(labeltbl.get_line_at(__lineno))
+                    print(labeltbl.get_src_at(__lineno))
                     last_line = __lineno
                 else:
                     print(f'{__lineno:4}      {val:04x}')
@@ -385,9 +390,12 @@ def parse_options(opt):
               "Copyright (c) 2021, Hiroyuki Ohsaki.\n"
               "All rights reserved.")
         sys.exit(1)
+    if opt.d:
+        global DEBUG
+        DEBUG = True
 
 def main():
-    opt = getopts('av') or usage()
+    opt = getopts('avd') or usage()
     parse_options(opt)
     show_listing = opt.a
     for file in sys.argv[1:]:
