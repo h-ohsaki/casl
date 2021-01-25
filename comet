@@ -21,6 +21,7 @@
 import re
 import struct
 import sys
+import readline
 
 from perlcompat import die, warn, getopts
 import tbdump
@@ -75,10 +76,10 @@ INSTTBL = {
 }
 
 CMDTBL = [
-    (r'^de|del', 'cmd_delete', False),
     (r'^du|dump', 'cmd_dump', False),
     (r'^b|break', 'cmd_break', False),
     (r'^di|disasm', 'cmd_disasm', False),
+    (r'^d|del', 'cmd_delete', False),
     (r'^f|file', 'cmd_file', True),
     (r'^h|\?|help', 'cmd_help', False),
     (r'^i|info', 'cmd_info', False),
@@ -134,7 +135,7 @@ class Comet:
 
     def __repr__(self):
         st = self.state
-        return f'Comet({st.pc:04x}, {st.gr[0]:02x}, {st.gr[1]:02x}, {st.gr[2]:02x}, {st.gr[3]:02x}, {st.gr[4]:02x} {st.fr:#b})'
+        return f'Comet(#{st.pc:04x}, #{st.gr[0]:02x}, #{st.gr[1]:02x}, #{st.gr[2]:02x}, #{st.gr[3]:02x}, #{st.gr[4]:02x} {st.fr:#b})'
 
     def debug(self, msg):
         if self._debug:
@@ -423,7 +424,7 @@ All rights reserved.""")
         try:
             subr = eval(f'Comet.exec_{nemonic}')
             self.debug(
-                f'exec_{nemonic}({inst:02x}, {gr}, {adr:04x}, {xr}, {eadr:04x})'
+                f'exec_{nemonic}(#{inst:02x}, {gr}, #{adr:04x}, {xr}, #{eadr:04x})'
             )
             subr(self, inst, gr, adr, xr, eadr)
         except AttributeError:
@@ -431,13 +432,16 @@ All rights reserved.""")
 
     # ----------------------------------------------------------------
     def cmd_run(self, *args):
-        while True:
-            self.exec()
-            # check the PC is at one of breakpoints
-            for n, addr in enumerate(self.breakpoints):
-                if self.state.pc == addr:
-                    print(f'Breakpoint {n}, #{addr:04x}')
-                    return
+        try:
+            while True:
+                self.exec()
+                # check the PC is at one of breakpoints
+                for n, addr in enumerate(self.breakpoints):
+                    if self.state.pc == addr:
+                        print(f'Breakpoint {n}, #{addr:04x}')
+                        return
+        except KeyboardInterrupt:
+            warn(f'execution stopped at #{self.state.pc:04x}')
 
     def cmd_step(self, *args):
         try:
@@ -458,16 +462,16 @@ All rights reserved.""")
             pass
 
     def cmd_delete(self, *args):
-        try:
-            n = parse_number(args[0])
-            if n is not None:
-                del self.breakpoints[n - 1]
-            else:
-                resp = input('Delete all breakpoints? (y or n) ')
-                if re.search(r'^[yY]', resp):
-                    self.breakpoints.clear()
-        except IndexError:
-            pass
+        if not args:
+            resp = input('Delete all breakpoints? (y or n) ')
+            if re.search(r'^[yY]', resp):
+                self.breakpoints.clear()
+        else:
+            try:
+                n = parse_number(args[0])
+                del self.breakpoints[n]
+            except IndexError:
+                warn(f"invalid breakpoint number '{args[0]}'")
 
     def cmd_info(self, *args):
         for n, addr in enumerate(self.breakpoints):
@@ -522,38 +526,40 @@ All rights reserved.""")
         self.load(file)
 
     def cmd_jump(self, *args):
-        try:
+        if not args:
+            warn(f'usage: jump address')
+        else:
             addr = parse_number(args[0])
             if addr is not None:
                 self.state.pc = parse_number(addr)
             else:
                 warn(f'invalid jump address "{args[0]}"')
-        except IndexError:
-            pass
 
     def cmd_memory(self, *args):
-        try:
+        if len(args) != 2:
+            warn('usage: memory address value')
+        else:
             addr = parse_number(args[0])
             val = parse_number(args[1])
             if addr is not None and val is not None:
                 self.memory[addr] = val
             else:
-                warn('invalid address "{args[0]}" or value "{args[1]}"')
-        except IndexError:
-            warn('memory command needs address and value')
+                warn('invalid address "{args[0]}"/value "{args[1]}"')
 
     def cmd_disasm(self, *args):
-        try:
-            addr = parse_number(args[0])
-        except IndexError:
+        if not args:
             addr = self.state.pc
+        else:
+            addr = parse_number(args[0])
+            if addr is None:
+                warn(f'invalid address "{args[0]}"')
+                return
         for n in range(16):
             inst, opr, size = self.parse(addr)
             print(f'#{addr:04x}\t{inst}\t{opr}')
             addr += size
 
     def cmd_help(self, *args):
-        self.debug(f'cmd_help({self}, {args})')
         print("""\
 List of commands:
 
@@ -582,6 +588,9 @@ q,  quit        Exit comet.""")
             # show prompt and input command from STDIN
             try:
                 line = input('comet> ')
+            except KeyboardInterrupt:
+                print()
+                continue
             except EOFError:
                 break
             if line == '':
@@ -594,6 +603,7 @@ q,  quit        Exit comet.""")
             for regexp, name, need_print in CMDTBL:
                 if re.search(regexp, cmd):
                     subr = eval(f'Comet.{name}')
+                    self.debug(f'{name}({args})')
                     subr(self, *args)
                     if need_print:
                         self.cmd_print()
