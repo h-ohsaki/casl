@@ -31,39 +31,39 @@ Inst = collections.namedtuple('Inst', ['type', 'code'])
 # object code of the instruction, and TYPE is the type of instruction
 # (e.g., ``op1'' indicates it takes two or three operands).
 INSTTBL = {
-               'LD'    : Inst('op1', 0x10),
-               'ST'    : Inst('op1', 0x11),
-               'LEA'   : Inst('op1', 0x12),
-               'ADD'   : Inst('op1', 0x20),
-               'SUB'   : Inst('op1', 0x21),
-               'AND'   : Inst('op1', 0x30),
-               'OR'    : Inst('op1', 0x31),
-               'EOR'   : Inst('op1', 0x33),
-               'CPA'   : Inst('op1', 0x40),
-               'CPL'   : Inst('op1', 0x41),
-               'SLA'   : Inst('op1', 0x50),
-               'SRA'   : Inst('op1', 0x51),
-               'SLL'   : Inst('op1', 0x52),
-               'SRL'   : Inst('op1', 0x53),
-               'JPZ'   : Inst('op2', 0x60),
-               'JMI'   : Inst('op2', 0x61),
-               'JNZ'   : Inst('op2', 0x62),
-               'JZE'   : Inst('op2', 0x63),
-               'JMP'   : Inst('op2', 0x64),
-               'PUSH'  : Inst('op2', 0x70),
-               'POP'   : Inst('op3', 0x71),
-               'CALL'  : Inst('op2', 0x80),
-               'RET'   : Inst('op4', 0x81),
-               # pseudo instructions
-               'START' : Inst('start', None),
-               'END'   : Inst('end',None),
-               'DS'    : Inst('ds' ,None),
-               'DC'    : Inst('dc' ,None),
-               # CASL macros
-               'IN'    : Inst('in'   ,None),
-               'OUT'   : Inst('out'  ,None),
-               'EXIT'  : Inst('exit' ,None),
-               }
+    'LD': Inst('op1', 0x10),
+    'ST': Inst('op1', 0x11),
+    'LEA': Inst('op1', 0x12),
+    'ADD': Inst('op1', 0x20),
+    'SUB': Inst('op1', 0x21),
+    'AND': Inst('op1', 0x30),
+    'OR': Inst('op1', 0x31),
+    'EOR': Inst('op1', 0x33),
+    'CPA': Inst('op1', 0x40),
+    'CPL': Inst('op1', 0x41),
+    'SLA': Inst('op1', 0x50),
+    'SRA': Inst('op1', 0x51),
+    'SLL': Inst('op1', 0x52),
+    'SRL': Inst('op1', 0x53),
+    'JPZ': Inst('op2', 0x60),
+    'JMI': Inst('op2', 0x61),
+    'JNZ': Inst('op2', 0x62),
+    'JZE': Inst('op2', 0x63),
+    'JMP': Inst('op2', 0x64),
+    'PUSH': Inst('op2', 0x70),
+    'POP': Inst('op3', 0x71),
+    'CALL': Inst('op2', 0x80),
+    'RET': Inst('op4', 0x81),
+    # pseudo instructions
+    'START': Inst('start', None),
+    'END': Inst('end', None),
+    'DS': Inst('ds', None),
+    'DC': Inst('dc', None),
+    # CASL macros
+    'IN': Inst('in', None),
+    'OUT': Inst('out', None),
+    'EXIT': Inst('exit', None),
+}
 
 def usage():
     die(f"""\
@@ -103,7 +103,6 @@ error and exit."""
     if not re.search(r'^[+-]?\d+$', number):
         error(f"'{number}' must be decimal")
     return int(number)
-
 
 # ----------------------------------------------------------------
 class LabelTable:
@@ -185,7 +184,9 @@ class Memory:
 
     def generate_code(self, addr, inst, gr, adr, xr):
         """Generate two-word code from INST, GR, ADR, and XR at ADDRESS."""
-        debug(f'generate_code({self}, {addr:04x}, {inst:02x}, {gr}, {adr}, {xr})')
+        debug(
+            f'generate_code({self}, {addr:04x}, {inst:02x}, {gr}, {adr}, {xr})'
+        )
         gr = self._register_number(gr)
         xr = self._register_number(xr)
         val = (inst << 8) + (gr << 4) + xr
@@ -300,9 +301,10 @@ def _pass1(labeltbl, memory, in_block, addr, label, inst, opr):
         # IN/OUT macro is expanded to push two operands onto the
         # stack, call SYS_IN / SYS_OUT, and restore stack.
         entry = SYS_IN if type_ == 'in' else SYS_OUT
-        memory.generate_code(addr+2, INSTTBL['PUSH'].code, None, oprs[1], None)
-        memory.generate_code(addr+4, INSTTBL['CALL'].code, None, entry, None)
-        memory.generate_code(addr+6, INSTTBL['LEA'].code, 'GR4', 2, 'GR4')
+        memory.generate_code(addr + 2, INSTTBL['PUSH'].code, None, oprs[1],
+                             None)
+        memory.generate_code(addr + 4, INSTTBL['CALL'].code, None, entry, None)
+        memory.generate_code(addr + 6, INSTTBL['LEA'].code, 'GR4', 2, 'GR4')
         addr += 8
 
     # EXIT macro
@@ -348,7 +350,8 @@ def pass1(file, labeltbl, memory):
                 labeltbl.register(label, addr)
             # generate object code according the type of instruction
             if inst:
-                in_block, addr = _pass1(labeltbl, memory, in_block, addr, label, inst, opr)
+                in_block, addr = _pass1(labeltbl, memory, in_block, addr,
+                                        label, inst, opr)
         if in_block:
             error("No 'END' instruction found")
 
@@ -362,27 +365,25 @@ def pass2(file, labeltbl, memory, show_listing):
         # dump memory image
         if show_listing:
             print('CASL LISTING file')
-        last_line = None
-        for addr in memory:
-            val = labeltbl.expand(memory[addr])
-            f.write(struct.pack('n', val))
-            __lineno = memory[addr].line
-
+        last_lineno = None
+        for addr, val in enumerate(memory):
+            val = labeltbl.expand(val)
+            f.write(struct.pack('>H', val))
             if show_listing:
-                if __lineno != last_line:
-                    print(f'{__lineno:4} {addr:04x} {val:04x} ', end='')
-                    print(labeltbl.get_src_at(__lineno))
-                    last_line = __lineno
+                file, lineno, line = memory.get_src_at(addr)
+                if lineno != last_lineno:
+                    print(f'{lineno:4} {addr:04x} {val:04x} ', end='')
+                    print(line)
+                    last_lineno = lineno
                 else:
-                    print(f'{__lineno:4}      {val:04x}')
+                    print(f'{lineno:4}      {val:04x}')
 
-        # list all symbols
-        if show_listing:
-            print('\nDEFINED SYMBOLS')
-            for label in labeltbl.keys():
-                print(
-                    f'\t{labeltbl[label].file}:{labeltbl[label].line}:\t{labeltbl[label].val:04x}\t{label}'
-                )
+def dump_labels(labeltbl):
+    print('\nDEFINED LABELS')
+    for label in labeltbl:
+        print(
+            f'\t{labeltbl[label].file}:{labeltbl[label].line}:\t{labeltbl[label].val:04x}\t{label}'
+        )
 
 def parse_options(opt):
     if opt.v:
@@ -403,6 +404,9 @@ def main():
         labeltbl = LabelTable()
         pass1(file, labeltbl, memory)
         pass2(file, labeltbl, memory, show_listing)
+        # list all labels
+        if show_listing:
+            dump_labels(labeltbl)
 
 if __name__ == "__main__":
     main()
