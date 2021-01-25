@@ -5,47 +5,20 @@
 # All rights reserved.
 #
 
+import collections
 import fileinput
 import os
 import os.path
 import re
+import struct
 import subprocess
 import sys
 
 from perlcompat import die, warn, getopts
 import tbdump
 
-# Each entry is a object code, and its associated value is a hash
-# having two keys: ID is the mnemonic of the instruction, and TYPE is
-# the type of it.
-
-import struct
-
-INSTTBL = {# COMET instructions
-               0x10 : { 'id' : 'LD'  , 'type' : 'op1' },
-               0x11 : { 'id' : 'ST'  , 'type' : 'op1' },
-               0x12 : { 'id' : 'LEA' , 'type' : 'op1' },
-               0x20 : { 'id' : 'ADD' , 'type' : 'op1' },
-               0x21 : { 'id' : 'SUB' , 'type' : 'op1' },
-               0x30 : { 'id' : 'AND' , 'type' : 'op1' },
-               0x31 : { 'id' : 'OR'  , 'type' : 'op1' },
-               0x33 : { 'id' : 'EOR' , 'type' : 'op1' },
-               0x40 : { 'id' : 'CPA' , 'type' : 'op1' },
-               0x41 : { 'id' : 'CPL' , 'type' : 'op1' },
-               0x50 : { 'id' : 'SLA' , 'type' : 'op1' },
-               0x51 : { 'id' : 'SRA' , 'type' : 'op1' },
-               0x52 : { 'id' : 'SLL' , 'type' : 'op1' },
-               0x53 : { 'id' : 'SRL' , 'type' : 'op1' },
-               0x60 : { 'id' : 'JPZ' , 'type' : 'op2' },
-               0x61 : { 'id' : 'JMI' , 'type' : 'op2' },
-               0x62 : { 'id' : 'JNZ' , 'type' : 'op2' },
-               0x63 : { 'id' : 'JZE' , 'type' : 'op2' },
-               0x64 : { 'id' : 'JMP' , 'type' : 'op2' },
-               0x70 : { 'id' : 'PUSH', 'type' : 'op2' },
-               0x71 : { 'id' : 'POP' , 'type' : 'op3' },
-               0x80 : { 'id' : 'CALL', 'type' : 'op2' },
-               0x81 : { 'id' : 'RET' , 'type' : 'op4' },
-               }
+VERSION = 0.1
+DEBUG = False
 
 # addresses of IN/OUT/EXI system calls
 SYS_IN = 0xfff0
@@ -60,22 +33,42 @@ FR_MINUS = 2
 # the top of the stack, which is the upper limit of the stack space.
 STACK_TOP = 0xff00
 
-# indices for the state list, @state
-PC = 0
-FR = 1
-GR0 = 2
-GR1 = 3
-GR2 = 4
-GR3 = 5
-GR4 = 6
-BP = 7
-
 # maximum/minimum of signed value
 MAX_SIGNED = 32767
 MIN_SIGNED = -32768
 
-VERSION = 0.1
-DEBUG = 1
+Inst = collections.namedtuple('Inst', ['type', 'nemonic'])
+Command = collections.namedtuple('Command', ['regexp', 'subr', 'need_print'])
+
+# COMET instructions
+# Each entry is a object code, and its associated value is a hash
+# having two keys: ID is the mnemonic of the instruction, and TYPE is
+# the type of it.
+INSTTBL = {
+               0x10 : Inst('op1', 'LD'  ),
+               0x11 : Inst('op1', 'ST'  ),
+               0x12 : Inst('op1', 'LEA' ),
+               0x20 : Inst('op1', 'ADD' ),
+               0x21 : Inst('op1', 'SUB' ),
+               0x30 : Inst('op1', 'AND' ),
+               0x31 : Inst('op1', 'OR'  ),
+               0x33 : Inst('op1', 'EOR' ),
+               0x40 : Inst('op1', 'CPA' ),
+               0x41 : Inst('op1', 'CPL' ),
+               0x50 : Inst('op1', 'SLA' ),
+               0x51 : Inst('op1', 'SRA' ),
+               0x52 : Inst('op1', 'SLL' ),
+               0x53 : Inst('op1', 'SRL' ),
+               0x60 : Inst('op2', 'JPZ' ),
+               0x61 : Inst('op2', 'JMI' ),
+               0x62 : Inst('op2', 'JNZ' ),
+               0x63 : Inst('op2', 'JZE' ),
+               0x64 : Inst('op2', 'JMP' ),
+               0x70 : Inst('op2', 'PUSH'),
+               0x71 : Inst('op3', 'POP' ),
+               0x80 : Inst('op2', 'CALL'),
+               0x81 : Inst('op4', 'RET' ),
+               }
 
 def usage():
     die(f"""\
@@ -85,7 +78,7 @@ usage: {sys.argv[0]} [-q] [com-file]
 
 def debug(msg):
     if DEBUG:
-        warn(msg)
+        warn('** ' + msg)
 
 def signed(val):
     return struct.unpack('>h', struct.pack('>H', val))[0]
@@ -112,86 +105,242 @@ def expand_number(val):
     else:
         return None
 
-def get_flag(val):
-    if val & 0x8000:
-        return FR_MINUS
-    elif val == 0:
-        return FR_ZERO
-    else:
-        return FR_PLUS
+class Memory:
+    def __init__(self):
+        self._memory = [0 for addr in range(0x10000)]
+        self.clear()
+    def __setitem__(self, addr, val):
+        self._memory[addr] = val
+    def __getitem__(self, addr):
+        return self._memory[addr]
+    def clear(self):
+        for addr in range(0x10000):
+            self[addr] = 0
 
-def mem_get(memory, pc):
-    if pc in memory:
-        return memory[pc]
-    else:
-        return 0
+class State:
+    def __init__(self):
+        self.pc = 0
+        self.fr = FR_ZERO
+        self.gr = [0, 0, 0, 0, STACK_TOP]
+        self.breakpoint = []
 
-def mem_put(memory, pc, val):
-    memory[pc] = val
+class Comet:
+    def __init__(self):
+        self.memory = Memory()
+        self.state = State()
 
-# Disassemble the object from the PC, and return strings for
-# the instruction and the operand.
-def parse(memory, state):
-    debug(f'parse(memory, state)')
+    def __repr__(self):
+        return f'Comet({self.state.pc:04x}, {self.state.gr[0]:02x}, {self.state.gr[1]:02x}, {self.state.gr[2]:02x}, {self.state.gr[3]:02x}, {self.state.gr[4]:02x} {self.state.fr:#b})'
 
-    pc = state[PC]
-    inst = mem_get(memory, pc) >> 8
-    gr = (mem_get(memory, pc) >> 4) & 0xf
-    xr = mem_get(memory, pc) & 0xf
-    adr = mem_get(memory, pc + 1)
+    def decode(self, addr=None):
+        if addr is None:
+            addr = self.state.pc
+        word = self.memory[addr]
+        inst = word >> 8
+        gr = (word >> 4) & 0xf
+        xr = word & 0xf
+        adr = self.memory[addr + 1]
+        return word, inst, gr, adr, xr
 
-    inst_sym = 'DC'
-    opr_sym = f'#{mem_get(memory, pc):04x}'
-    size = 1
-    key = f'0x{inst:02x}'
+    def parse(self, addr=None):
+        """ Disassemble the object from the PC, and return strings for the
+        instruction and the operand."""
+        debug(f'parse({self}, {addr})')
 
-    if key in INSTTBL:
-        inst_sym = INSTTBL[key]['id']
-        type_ = INSTTBL[key]['type']
-
-        # instructions with GR, adr, and XR
-        if type_ == 'op1':
-            opr_sym = f'GR{gr}, #{adr:04x}'
-            if xr > 0:
-                opr_sym += f', GR{xr}'
+        word, inst, gr, adr, xr = self.decode(addr)
+    
+        inst_sym = 'DC'
+        opr_sym = f'#{word:04x}'
+        size = 1
+        if inst in INSTTBL:
+            inst_sym = INSTTBL[inst].nemonic
+            type_ = INSTTBL[inst].type
+    
+            # instructions with GR, adr, and XR
+            if type_ == 'op1':
+                opr_sym = f'GR{gr}, #{adr:04x}'
+                if xr > 0:
+                    opr_sym += f', GR{xr}'
+                size = 2
+    
+            # instructions with adr and XR
+            elif type_ == 'op2':  # with adr, (XR)
+                opr_sym = f'#{adr:04x}'
+                if xr > 0:
+                    opr_sym += f', GR{xr}'
+                size = 2
+    
+            # instructions with GR
+            elif type_ == 'op3':  # only with GR
+                opr_sym = f'GR{gr}'
+                size = 2
+    
+            # instructions without operand
+            elif type_ == 'op4':  # no operand
+                opr_sym = ''
+                size = 1
+    
+        # for IN/OUT/EXIT system calls
+        if addr == SYS_IN:
+            inst_sym, opr_sym = 'IN', 'SYSTEM CALL'
             size = 2
-
-        # instructions with adr and XR
-        elif type_ == 'op2':  # with adr, (XR)
-            opr_sym = f'#{adr:04x}'
-            if xr > 0:
-                opr_sym += f', GR{xr}'
+    
+        if addr == SYS_OUT:
+            inst_sym, opr_sym = 'OUT', 'SYSTEM CALL'
             size = 2
-
-        # instructions with GR
-        elif type_ == 'op3':  # only with GR
-            opr_sym = f'GR{gr}'
+    
+        if addr == SYS_EXIT:
+            inst_sym, opr_sym = 'EXIT', 'SYSTEM CALL'
             size = 2
+    
+        return inst_sym, opr_sym, size
 
-        # instructions without operand
-        elif type_ == 'op4':  # no operand
-            opr_sym = ''
-            size = 1
+    def update_fr(self, val):
+        if val & 0x8000:
+            self.state.fr = FR_MINUS
+        elif val == 0:
+            self.state.fr = FR_ZERO
+        else:
+            self.state.fr = FR_PLUS
+    
+    def step_exec(self):
+        """Execute one instruction from the PC --- evaluate the intruction,
+        update registers, and advance the PC by the instruction's size."""
+        debug(f'step_exec({self})')
+    
+        pc = self.state.pc
+        fr = self.state.fr
+        regs = self.state.gr	# alias
+    
+        word, inst, gr, adr, xr = self.decode(pc)
+        eadr = adr
+        if 1 <= xr <= 4:
+            eadr += regs[xr]
+        eadr &= 0xffff
+    
+        # obtain the mnemonic and the operand for the current address
+        nemonic, opr, size = self.parse()
+        if nemonic == 'IN':
+            self.exec_in()
+            return
+        elif nemonic == 'OUT':
+            self.exec_out()
+            return
+        elif nemonic == 'EXIT':
+            sys.exit(1)
+        elif nemonic == 'LD':
+            regs[gr] = self.memory[eadr]
+            pc += 2
+        elif nemonic == 'ST':
+            self.memory[eadr] = regs[gr]
+            pc += 2
+        elif nemonic == 'LEA':
+            regs[gr] = eadr
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'ADD':
+            regs[gr] += self.memory[eadr]
+            regs[gr] &= 0xffff
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'SUB':
+            regs[gr] -= self.memory[eadr]
+            regs[gr] &= 0xffff
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'AND':
+            regs[gr] &= self.memory[eadr]
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'OR':
+            regs[gr] |= self.memory[eadr]
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'EOR':
+            regs[gr] ^= self.memory[eadr]
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'CPA':
+            v = signed(regs[gr]) - signed(self.memory[eadr])
+            v = max(MIN_SIGNED, min(MAX_SIGNED, v))
+            self.update_fr(unsigned(v))
+            pc += 2
+        elif nemonic == 'CPL':
+            v = regs[gr] - self.memory[eadr]
+            v = max(MIN_SIGNED, min(MAX_SIGNED, v))
+            self.update_fr(unsigned(v))
+            pc += 2
+        elif nemonic == 'SLA':
+            v = regs[gr] & 0x8000
+            regs[gr] <<= eadr
+            regs[gr] |= v
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'SRA':
+            v = regs[gr]
+            if v & 0x8000:
+                v &= 0x7fff
+                v >>= eadr
+                v += ((0x7fff >> eadr) ^ 0xffff)
+            else:
+                v >>= eadr
+            regs[gr] = v
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'SLL':
+            regs[gr] <<= eadr
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'SRL':
+            regs[gr] >>= eadr
+            self.update_fr(regs[gr])
+            pc += 2
+        elif nemonic == 'JPZ':
+            if fr != FR_MINUS:
+                pc = eadr
+            else:
+                pc += 2
+        elif nemonic == 'JMI':
+            if fr == FR_MINUS:
+                pc = eadr
+            else:
+                pc += 2
+        elif nemonic == 'JNZ':
+            if fr != FR_ZERO:
+                pc = eadr
+            else:
+                pc += 2
+        elif nemonic == 'JZE':
+            if fr == FR_ZERO:
+                pc = eadr
+            else:
+                pc += 2
+        elif nemonic == 'JMP':
+            pc = eadr
+        elif nemonic == 'PUSH':
+            regs[4] -= 1
+            self.memory[regs[4]] =eadr
+            pc += 2
+        elif nemonic == 'POP':
+            regs[gr] = self.memory[regs[4]]
+            regs[4] += 1
+            pc += 2
+        elif nemonic == 'CALL':
+            regs[4] -= 1
+            self.memory[regs[4]] = pc + 2
+            pc = eadr
+        elif nemonic == 'RET':
+            pc = self.memory[regs[4]]
+            regs[4] += 1
+        else:
+            die(f'illegal instruction {inst:02x} at {pc:04x}')
 
-    # for IN/OUT/EXIT system calls
-    if pc == SYS_IN:
-        inst_sym, opr_sym = 'IN', 'SYSTEM CALL'
-        size = 2
-
-    if pc == SYS_OUT:
-        inst_sym, opr_sym = 'OUT', 'SYSTEM CALL'
-        size = 2
-
-    if pc == SYS_EXIT:
-        inst_sym, opr_sym = 'EXIT', 'SYSTEM CALL'
-        size = 2
-
-    return inst_sym, opr_sym, size
+        self.state.pc = pc
 
 # Handler of the IN system call --- extract two arguments from the
 # stack, read a line from STDIN, store it in specified place.
 def exec_in(memory, state):
-    debug(f'exec_in(memory, state)')
+    debug(f'exec_in({self})')
 
     pc = mem_get(memory, state[GR4])
     lenp = mem_get(memory, state[GR4] + 1)
@@ -210,7 +359,7 @@ def exec_in(memory, state):
 # Handler of the OUT system call --- extract two arguments from the
 # stack, write a string to STDOUT.
 def exec_out(memory, state):
-    debug(f'exec_out(memoryp, statep)')
+    debug(f'exec_out({self})')
 
     pc = mem_get(memory, state[GR4])
     lenp = mem_get(memory, state[GR4] + 1)
@@ -225,168 +374,9 @@ def exec_out(memory, state):
     state[PC] = pc  # go back to the caller
     state[GR4] += 1
 
-# Execute one instruction from the PC --- evaluate the intruction,
-# update registers, and advance the PC by the instruction's size.
-def step_exec(memory, state):
-    debug(f'step_exec(memoryp, statep)')
-
-    # obtain the mnemonic and the operand for the current address
-    inst, *opr = parse(memory, state)
-
-    if inst == 'IN':
-        exec_in(memory, state)
-        return
-
-    if inst == 'OUT':
-        exec_out(memory, state)
-        return
-
-    if inst == 'EXIT':
-        sys.exit(1)
-
-    pc = state[PC]
-    fr = state[FR]
-    regs = state[GR0:GR4 + 1]
-
-    gr = (mem_get(memory, pc) >> 4) & 0xf
-    xr = mem_get(memory, pc) & 0xf
-    adr = mem_get(memory, pc + 1)
-    eadr = adr
-    if 1 <= xr <= 4:
-        eadr += regs[xr]
-    eadr &= 0xffff
-
-    if inst == 'LD':
-        regs[gr] = mem_get(memory, eadr)
-        pc += 2
-
-    elif inst == 'ST':
-        mem_put(memory, eadr, regs[gr])
-        pc += 2
-
-    elif inst == 'LEA':
-        regs[gr] = eadr
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'ADD':
-        regs[gr] += mem_get(memory, eadr)
-        regs[gr] &= 0xffff
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'SUB':
-        regs[gr] -= mem_get(memory, eadr)
-        regs[gr] &= 0xffff
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'AND':
-        regs[gr] &= mem_get(memory, eadr)
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'OR':
-        regs[gr] |= mem_get(memory, eadr)
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'EOR':
-        regs[gr] ^= mem_get(memory, eadr)
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'CPA':
-        v = signed(regs[gr]) - signed(mem_get(memory, eadr))
-        if v > MAX_SIGNED:
-            v = MAX_SIGNED
-        if v < MIN_SIGNED:
-            v = MIN_SIGNED
-        fr = get_flag(unsigned(v))
-        pc += 2
-
-    elif inst == 'CPL':
-        v = regs[gr] - mem_get(memory, eadr)
-        if v > MAX_SIGNED:
-            v = MAX_SIGNED
-        if v < MIN_SIGNED:
-            v = MIN_SIGNED
-        fr = get_flag(unsigned(v))
-        pc += 2
-
-    elif inst == 'SLA':
-        v = regs[gr] & 0x8000
-        regs[gr] <<= eadr
-        regs[gr] |= v
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'SRA':
-        v = regs[gr]
-        if v & 0x8000:
-            v &= 0x7fff
-            v >>= eadr
-            v += ((0x7fff >> eadr) ^ 0xffff)
-        else:
-            v >>= eadr
-        regs[gr] = v
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'SLL':
-        regs[gr] <<= eadr
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'SRL':
-        regs[gr] >>= eadr
-        fr = get_flag(regs[gr])
-        pc += 2
-
-    elif inst == 'JPZ':
-        pc = eadr if fr != FR_MINUS else pc + 2
-
-    elif inst == 'JMI':
-        pc = eadr if fr == FR_MINUS else pc + 2
-
-    elif inst == 'JNZ':
-        pc = eadr if fr != FR_ZERO else pc + 2
-
-    elif inst == 'JZE':
-        pc = eadr if fr == FR_ZERO else pc + 2
-
-    elif inst == 'JMP':
-        pc = eadr
-
-    elif inst == 'PUSH':
-        regs[4] -= 1
-        mem_put(memory, regs[4], eadr)
-        pc += 2
-
-    elif inst == 'POP':
-        regs[gr] = mem_get(memory, regs[4])
-        regs[4] += 1
-        pc += 2
-
-    elif inst == 'CALL':
-        regs[4] -= 1
-        mem_put(memory, regs[4], pc + 2)
-        pc = eadr
-
-    elif inst == 'RET':
-        pc = mem_get(memory, regs[4])
-        regs[4] += 1
-
-    else:
-        die(f'illegal instruction inst at {pc:04x}.')
-
-    # update registers
-    state[PC] = pc
-    state[FR] = fr
-    state[GR0:GR4 + 1] = regs
 
 def cmd_run(memory, state, *args):
-    debug(f'cmd_run(memoryp, statep, {args})')
+    debug(f'cmd_run({comet}, {args})')
     while True:
         step_exec(memory, state)
         # check the PC is at one of breakpoints
@@ -395,17 +385,17 @@ def cmd_run(memory, state, *args):
                 print(f'Breakpoint ???, #{pnt:04x}')
                 return
 
-def cmd_step(memory, state, *args):
-    debug(f'cmd_step(memoryp, statep, {args})')
+def cmd_step(comet, *args):
+    debug(f'cmd_step({comet}, {args})')
     if args:
         count = expand_number(args[0])
     else:
         count = 1
     for n in range(count):
-        step_exec(memory, state)
+        comet.step_exec()
 
 def cmd_break(memory, state, *args):
-    debug(f'cmd_break(memoryp, statep, {args})')
+    debug(f'cmd_break({comet}, {args})')
     val = expand_number(args[0])
     if val is not None:
         state[BP].append(val)
@@ -413,7 +403,7 @@ def cmd_break(memory, state, *args):
         warn(f'invalid argument')
 
 def cmd_delete(memory, state, *args):
-    debug(f'cmd_delete(memoryp, statep, {args})')
+    debug(f'cmd_delete({comet}, {args})')
     val = expand_number(args[0])
     if val is not None:
         state[BP] = state[BP][:val - 1] + state[BP][val + 1:]
@@ -423,30 +413,28 @@ def cmd_delete(memory, state, *args):
             state[BP] = []
 
 def cmd_info(memory, state, *args):
-    debug(f'cmd_info(memoryp, statep, {args})')
+    debug(f'cmd_info({comet}, {args})')
     for pnt in state[BP]:
         print(f'??: #{pnt:04x}')
 
-def cmd_print(memory, state, *args):
-    debug(f'cmd_print(memoryp, statep, {args})')
-    pc = state[PC]
-    fr = state[FR]
-    regs = state[GR0:GR4 + 1]
-
-    # obtain instruction and operand at current PC
-    inst, *opr = parse(memory, state)
+def cmd_print(comet, *args):
+    debug(f'cmd_print({comet}, {args})')
+    # obtain instruction and operand at the current PC
+    inst, opr, size = comet.parse()
+    gr = comet.state.gr
+    fr = comet.state.fr
 
     print()
-    print(f"PC  #{pc:04x} [ {inst} {opr} ]\n"
-f"GR0 #{regs[0]:04x} ({signed(regs[0]):6}) "
-f"GR1 #{regs[0]:04x} ({signed(regs[0]):6}) "
-f"GR2 #{regs[0]:04x} ({signed(regs[0]):6})\n"
-f"GR3 #{regs[0]:04x} ({signed(regs[0]):6}) "
-f"GR4 #{regs[0]:04x} ({signed(regs[0]):6}) "
+    print(f"PC  #{comet.state.pc:04x} [ {inst} {opr} ]\n"
+f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
+f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
+f"GR2 #{gr[2]:04x} ({signed(gr[2]):6})\n"
+f"GR3 #{gr[3]:04x} ({signed(gr[3]):6}) "
+f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
 f"FR  {fr:#b} ({fr:6})\n")
 
 def cmd_dump(memory, state, *args):
-    debug(f'cmd_dump(memoryp, statep, {args})')
+    debug(f'cmd_dump({comet}, {args})')
     val = expand_number(args[0])
     if val is not None:
         val = state[PC]
@@ -464,37 +452,35 @@ def cmd_dump(memory, state, *args):
         print()
 
 def cmd_stack(memory, state, *args):
-    debug(f'cmd_stack(memoryp, statep, {args})')
+    debug(f'cmd_stack({comet}, {args})')
     val = state[GR4]
     cmd_dump(memory, state, val)
 
-def cmd_file(memory, state, *args):
-    debug(f'cmd_file(memoryp, statep, {args})')
-    file = args[0]
+def cmd_file(comet, file):
+    debug(f'cmd_file({comet}, {file})')
     with open(file, 'rb') as f:
-        print(f'Reading object from {file}...')
+        warn(f'Reading object from {file}...')
+
         # check file type
         header = f.read(16)
         if header[:4] != b'CASL':
             die(f'{file}: not a COMET object file')
-        start = struct.unpack('>H', header[4:6])[0]
-        # read into MEMORY
-        pc = 0
-        for addr in range(0x10000):
-            memory[addr] = 0# clear memory
+        comet.state.pc = struct.unpack('>H', header[4:6])[0]
+
+        # read into memory
+        addr = 0
         while True:
             buf = f.read(2)
-            if len(buf) < 2:
+            if not buf:
                 break
-            if pc >= STACK_TOP:
+            if addr >= STACK_TOP:
                 die('out of memory')
-            memory[pc] = struct.unpack('>H', buf)[0]
-            pc += 1
-    state[PC] = start
-    print('done.')
+            comet.memory[addr] = struct.unpack('>H', buf)[0]
+            addr += 1
+        warn('done.')
 
 def cmd_jump(memory, state, *args):
-    debug(f'cmd_jump(memoryp, statep, {args})')
+    debug(f'cmd_jump({comet}, {args})')
     val = expand_number(args[0])
     if val is not None:
         state[PC] = expand_number(val)
@@ -502,7 +488,7 @@ def cmd_jump(memory, state, *args):
         warn(f'invalid argument')
 
 def cmd_memory(memory, state, *args):
-    debug(f'cmd_memory(memoryp, statep, {args})')
+    debug(f'cmd_memory({comet}, {args})')
     adr = expand_number(args[0])
     val = expand_number(args[1])
     if adr is not None and val is not None:
@@ -510,24 +496,19 @@ def cmd_memory(memory, state, *args):
     else:
         warn('invalid argument')
 
-def cmd_disasm(memory, state, *args):
-    debug(f'cmd_disasm(memoryp, statep, {args})')
+def cmd_disasm(comet, *args):
+    debug(f'cmd_disasm({comet}, {args})')
     if args:
-        val = expand_number(args[0])
+        addr = expand_number(args[0])
     else:
-        val = state[PC]
-
-    pc = state[PC]  # save original PC
-    state[PC] = val
-
+        addr = comet.state.pc
     for n in range(16):
-        inst, opr, size = parse(memory, state)
-        print(f'#{state[PC]:04x}\t{inst}\t{opr}')
-        state[PC] += size
-    state[PC] = pc  # restore PC
+        inst, opr, size = comet.parse(addr)
+        print(f'#{addr:04x}\t{inst}\t{opr}')
+        addr += size
 
 def cmd_help(memory, state, *args):
-    debug(f'cmd_help(memoryp, statep, {args})')
+    debug(f'cmd_help({comet}, {args})')
     print("""\
 List of commands:
 
@@ -546,42 +527,47 @@ di, disasm      Disassemble 32 words from specified address.
 h,  help        Print list of commands.
 q,  quit        Exit comet.""")
 
-CMDTBL = {
-    'r(r|run)': {'subr': cmd_run, 'list': 1},
-    r'(s|step)': {'subr': cmd_step, 'list': 1},
-    r'(b|break)': {'subr': cmd_break, 'list': 0},
-#    r'(de|del)': {'subr': cmd_delete, 'list': 0},
-    r'(i|info)': {'subr': cmd_info, 'list': 0},
-    r'(p|print)': {'subr': cmd_print, 'list': 0},
-    r'(du|dump)': {'subr': cmd_dump, 'list': 0},
-    r'(st|stack)': {'subr': cmd_stack, 'list': 0},
-    r'(f|file)': {'subr': cmd_file, 'list': 1},
-    r'(j|jump)': {'subr': cmd_jump, 'list': 1},
-    r'(m|memory)': {'subr': cmd_memory, 'list': 1},
-    r'(di|disasm)': {'subr': cmd_disasm, 'list': 0},
-    r'(h|help)': {'subr': cmd_help, 'list': 0},
-}
+def cmd_quit(comet, *args):
+    sys.exit(1)
 
-def main():
-    opt = getopts('q') or usage()
+CMDTBL = [
+Command('r|run', cmd_run, True),
+Command('s|step', cmd_step,  True),
+Command('b|break', cmd_break,  False),
+Command('de|del', cmd_delete,  False),
+Command('i|info', cmd_info,  False),
+Command('p|print', cmd_print,  False),
+Command('du|dump', cmd_dump,  False),
+Command('st|stack', cmd_stack,  False),
+Command('f|file', cmd_file,  True),
+Command('j|jump', cmd_jump,  True),
+Command('m|memory', cmd_memory,  True),
+Command('di|disasm', cmd_disasm,  False),
+Command('h|help', cmd_help,  False),
+Command('q|quit', cmd_quit, False),
+]
+
+def parse_options(opt):
     if not opt.q:
         print(f"""\
 This is COMET, version {VERSION}.
 Copyright (c) 2021, Hiroyuki Ohsaki.
 All rights reserved.""")
+    if opt.d:
+        global DEBUG
+        DEBUG = True
 
-    # memory image
-    memory = [0 for _ in range(0x10000)]
+def main():
+    opt = getopts('qd') or usage()
+    parse_options(opt)
 
-    # PC, FR, GR0, GR1, GR2, GR3, GR4 (SP), break points
-    state = [0x0000, FR_ZERO, 0, 0, 0, 0, STACK_TOP, ()]
-
+    comet = Comet()
     if len(sys.argv) >= 2:
-        cmd_file(memory, state, sys.argv[1])
+        file = sys.argv[1]
+        cmd_file(comet, file)
 
     last_line = ''
-    cmd_print(memory, state)
-
+    cmd_print(comet)
     while True:
         # show prompt and input command from STDIN
         line = input('comet> ')
@@ -590,20 +576,15 @@ All rights reserved.""")
         cmd, *args = re.split(r'\s+', line)
         if not cmd:
             continue
-        if re.search(r'^(q|quit)$', cmd):
-            break
 
         # execute command according to command
-        found = 0
-        for regexp in CMDTBL.keys():
-            if re.search(r'^' + regexp, cmd):
-                CMDTBL[regexp]['subr'](memory, state, *args)
-                if CMDTBL[regexp]['list']:
-                    cmd_print(memory, state, *args)
-                found = 1
+        for pattern, subr, need_print in CMDTBL:
+            if re.search(r'^' + pattern, cmd):
+                subr(comet, *args)
+                if need_print:
+                    cmd_print(comet)
                 break
-
-        if not found:
+        else:
             print('undefined command: "{cmd}". Try "help"')
 
 if __name__ == "__main__":
