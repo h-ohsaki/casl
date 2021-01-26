@@ -130,7 +130,7 @@ class Comet:
     def __init__(self, debug=False):
         self.memory = [0] * 0x10000
         self.state = State()
-        self.breakpoints = []
+        self.breakpoints = {}
         self._debug = debug
 
     def __repr__(self):
@@ -436,7 +436,8 @@ All rights reserved.""")
             while True:
                 self.exec()
                 # check the PC is at one of breakpoints
-                for n, addr in enumerate(self.breakpoints):
+                for n in sorted(self.breakpoints.keys()):
+                    addr = self.breakpoints[n]
                     if self.state.pc == addr:
                         print(f'Breakpoint {n}, #{addr:04x}')
                         return
@@ -455,7 +456,11 @@ All rights reserved.""")
         try:
             addr = parse_number(args[0])
             if addr is not None:
-                self.breakpoints.append(addr)
+                # register at the first available slot
+                for n in range(1, 100):
+                    if not n in self.breakpoints:
+                        self.breakpoints[n] = addr
+                        break
             else:
                 warn(f'invalid breakpoint address "{args[0]}"')
         except IndexError:
@@ -474,7 +479,8 @@ All rights reserved.""")
                 warn(f"invalid breakpoint number '{args[0]}'")
 
     def cmd_info(self, *args):
-        for n, addr in enumerate(self.breakpoints):
+        for n in sorted(self.breakpoints.keys()):
+            addr = self.breakpoints[n]
             print(f'{n}: #{addr:04x}')
 
     def cmd_print(self, *args):
