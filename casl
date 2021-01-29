@@ -479,3 +479,36 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+DC 数値,数値…
+  文字定数、アドレス定数(ラベル)
+  16 進数 A-F
+  ''
+RPUSH   PUSH GR1..GR7
+RPOP    POP GR7...GR1
+START label
+
+IN MAX 256, EOF -1
+OUT 上位8ビットは無視される、長さ >=0、GR保存、FR不定
+  リテラルの? DC は END の直前
+
+adr =123   DC 123 を生成し、そのアドレス
+
+未定義ラベルは別の START とみなす
+SP の初期値は末尾 +1
+
+OSへの制御は RET で帰る
+
+マクロ命令の例
+  SVC 1
+
+主OP 15-12 (4bit)
+副OP 11-8 (4bit)
+x/r1 4-7 4bit
+x/r2 3-0 4bit
+
+命令語長 1 or 2
+
+
+"""
