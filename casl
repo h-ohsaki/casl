@@ -27,50 +27,58 @@ import tbdump
 
 VERSION = 0.4
 
-# addresses of IN/OUT/EXIT system calls --- these MACROs are expanded
-# to call this address after pushing its arguments on stack.
-SYS_IN = 0xfff0
-SYS_OUT = 0xfff2
-SYS_EXIT = 0xfff4
-
-# COMET instructions
-# All valid instructions must have an entry in this hash.  CODE is the
-# object code of the instruction, and TYPE is the type of instruction
-# (e.g., ``op1'' indicates it takes two or three operands).
-INSTTBL = {
-    'LD': ['op1', 0x10],
-    'ST': ['op1', 0x11],
-    'LEA': ['op1', 0x12],
-    'ADD': ['op1', 0x20],
-    'SUB': ['op1', 0x21],
-    'AND': ['op1', 0x30],
-    'OR': ['op1', 0x31],
-    'EOR': ['op1', 0x33],
-    'CPA': ['op1', 0x40],
-    'CPL': ['op1', 0x41],
-    'SLA': ['op1', 0x50],
-    'SRA': ['op1', 0x51],
-    'SLL': ['op1', 0x52],
-    'SRL': ['op1', 0x53],
-    'JPZ': ['op2', 0x60],
-    'JMI': ['op2', 0x61],
-    'JNZ': ['op2', 0x62],
-    'JZE': ['op2', 0x63],
-    'JMP': ['op2', 0x64],
-    'PUSH': ['op2', 0x70],
-    'POP': ['op3', 0x71],
-    'CALL': ['op2', 0x80],
-    'RET': ['op4', 0x81],
-    # pseudo instructions
-    'START': ['start', None],
-    'END': ['end', None],
-    'DS': ['ds', None],
-    'DC': ['dc', None],
-    # CASL macros
-    'IN': ['io', None],
-    'OUT': ['io', None],
-    'EXIT': ['exit', None],
+# COMET II instructions: the key for each entry is op code, and its corresponding
+# value is a tuple of the instruction type and the mnemonic.
+_INSTTBL = {
+    # op code : (type, mnemonic)
+    0x00: ('nopr', 'NOP'),
+    0x10: ('r_adr_x', 'LD'),
+    0x11: ('r_adr_x', 'ST'),
+    0x12: ('r_adr_x', 'LAD'),
+    0x14: ('r1_r2', 'LD'),
+    0x20: ('r_adr_x', 'ADDA'),
+    0x21: ('r_adr_x', 'SUBA'),
+    0x22: ('r_adr_x', 'ADDL'),
+    0x23: ('r_adr_x', 'SUBL'),
+    0x24: ('r1_r2', 'ADDA'),
+    0x25: ('r1_r2', 'SUBA'),
+    0x26: ('r1_r2', 'ADDL'),
+    0x27: ('r1_r2', 'SUBL'),
+    0x30: ('r_adr_x', 'AND'),
+    0x31: ('r_adr_x', 'OR'),
+    0x32: ('r_adr_x', 'XOR'),
+    0x34: ('r1_r2', 'AND'),
+    0x35: ('r1_r2', 'OR'),
+    0x36: ('r1_r2', 'XOR'),
+    0x40: ('r_adr_x', 'CPA'),
+    0x41: ('r_adr_x', 'CPL'),
+    0x44: ('r1_r2', 'CPA'),
+    0x45: ('r1_r2', 'CPL'),
+    0x50: ('r_adr_x', 'SLA'),
+    0x51: ('r_adr_x', 'SRA'),
+    0x52: ('r_adr_x', 'SLL'),
+    0x53: ('r_adr_x', 'SRL'),
+    0x61: ('adr_x', 'JMI'),
+    0x62: ('adr_x', 'JNZ'),
+    0x63: ('adr_x', 'JZE'),
+    0x64: ('adr_x', 'JUMP'),
+    0x65: ('adr_x', 'JPL'),
+    0x66: ('adr_x', 'JOV'),
+    0x70: ('adr_x', 'PUSH'),
+    0x71: ('r', 'POP'),
+    0x80: ('adr_x', 'CALL'),
+    0x81: ('nopr', 'RET'),
+    0xf0: ('adr_x', 'SVC'),
 }
+
+INSTTBL = {}
+for inst, val in _INSTTBL.items():
+    categ, mnemonic = val
+    INSTTBL[mnemonic] = categ, inst
+INSTTBL['START'] = ('start', None)
+INSTTBL['END'] = ('end', None)
+INSTTBL['DS'] = ('ds', None)
+INSTTBL['DC'] = ('dc', None)
 
 def usage():
     die(f"""\
@@ -210,7 +218,7 @@ class Memory:
             self.err_func(f"invalid register '{reg}'")
         return int(m.group(1))
 
-    def generate_code(self, addr, inst, gr, adr, xr):
+    def generate_code(self, addr, inst, gr, adr, xr, single_word=False):
         """Generate two-word code from INST, GR, ADR, and XR at ADDRESS."""
         self.debug_func(
             f'generate_code({self}, {addr:04x}, {inst:02x}, {gr}, {adr}, {xr})'
@@ -219,7 +227,8 @@ class Memory:
         xr = self._register_number(xr)
         val = (inst << 8) + (gr << 4) + xr
         self[addr] = val
-        self[addr + 1] = adr
+        if not single_word:
+            self[addr + 1] = adr
 
 # ----------------------------------------------------------------
 class Assembler:
@@ -289,35 +298,38 @@ All rights reserved."""
         else:
             return label, None
 
-    # instructions with GR, adr, and optional XR
-    def generate_op1(self, label, inst):
+    def generate_r_adr_x(self, label, inst):
         if not (2 <= inst.noprs <= 3):
             self.error(f"missing operands '{inst}'")
         self.memory.generate_code(self.addr, inst.code, inst.opr1, inst.opr2,
                                   inst.opr3)
         self.addr += 2
 
-    # instructions with adr, and optional XR
-    def generate_op2(self, label, inst):
+    def generate_r1_r2(self, label, inst):
+        if not (inst.noprs == 2):
+            self.error(f"missing operands '{inst}'")
+        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, inst.opr2,
+                                single_word=True  )
+        self.addr += 1
+
+    def generate_adr_x(self, label, inst):
         if not (1 <= inst.noprs <= 2):
             self.error(f"too much/too many operand '{inst}'")
         self.memory.generate_code(self.addr, inst.code, None, inst.opr1,
                                   inst.opr2)
         self.addr += 2
 
-    # instructions only with optional GR
-    def generate_op3(self, label, inst):
+    def generate_r(self, label, inst):
         if inst.noprs != 1:
             self.error(f"expects just one operand '{inst}'")
-        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, None)
-        self.addr += 2
+        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, None, single_word=True)
+        self.addr += 1
 
-    # instructions without operand
-    def generate_op4(self, label, inst):
+    def generate_nopr(self, label, inst):
         if inst.noprs > 0:
             self.error(f'invalid operand "{inst}"')
-        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, None)
-        self.addr += 2
+        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, None, single_word=True)
+        self.addr += 1
 
     # START instruction
     def generate_start(self, label, inst):
@@ -360,38 +372,6 @@ All rights reserved."""
             self.addr += 1
         else:
             self.error(f"DC accepts a word count or a string '{inst}'")
-
-    # IN/OUT macro
-    def generate_io(self, label, inst):
-        if inst.noprs != 2:
-            self.error(f"IN/OUT requires two operands '{inst}'")
-        # two operands must be labels, not numbers
-        self.labeltbl.check_label(inst.opr1)
-        self.labeltbl.check_label(inst.opr2)
-        # IN/OUT macro is expanded to push two operands onto the
-        # stack, call SYS_IN / SYS_OUT, and restore stack.
-        if inst.op == 'IN':
-            entry = SYS_IN
-        else:
-            entry = SYS_OUT
-        self.memory.generate_code(self.addr, INSTTBL['PUSH'][1], None,
-                                  inst.opr1, None)
-        self.memory.generate_code(self.addr + 2, INSTTBL['PUSH'][1], None,
-                                  inst.opr2, None)
-        self.memory.generate_code(self.addr + 4, INSTTBL['CALL'][1], None,
-                                  entry, None)
-        self.memory.generate_code(self.addr + 6, INSTTBL['LEA'][1], 'GR4', 2,
-                                  'GR4')
-        self.addr += 8
-
-    # EXIT macro
-    def generate_exit(self, label, inst):
-        if inst.noprs > 0:
-            self.error(f"EXIT does not accept operand '{inst}'")
-        # EXIT macro is replaced with 'JMP SYS_EXIT'
-        self.memory.generate_code(self.addr, INSTTBL['JMP'][1], None, SYS_EXIT,
-                                  None)
-        self.addr += 2
 
     def generate(self, label, inst):
         self.debug(f'generate({self}, {label}, {inst})')
