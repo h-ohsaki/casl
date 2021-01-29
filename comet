@@ -104,11 +104,17 @@ usage: {sys.argv[0]} [-qd] [com-file]
 
 def signed(val):
     """Interpret unsigned short VAL as signed short."""
-    return struct.unpack('>h', struct.pack('>H', val))[0]
+    if val > MAX_SIGNED:
+        return -(0x10000 - val)
+    else:
+        return val
 
 def unsigned(val):
     """Interpret signed short VAL as unsigned short."""
-    return struct.unpack('>H', struct.pack('>h', val))[0]
+    if val < 0:
+        return (0x10000 - (-val)) & 0xffff
+    else:
+        return val
 
 def parse_number(v):
     """Convert a number V, either a string or an integer, to unsigned
@@ -226,16 +232,16 @@ All rights reserved.""")
                 size = 1
         else:
             # interpret as a binary word by default
+            categ = 'nopr'
             nemonic = 'DC'
             opr = f'#{word:04x}'
             size = 1
         return categ, nemonic, opr, size
 
     def update_fr(self, gr=None, val=None, of=None):
-        self.debug(f'update_fr({self}, {gr}, {val})')
-        if gr is not None:
+        self.debug(f'update_fr({self}, {val}, {of})')
+        if val is None:
             val = self.state.gr[gr]
-            self.state.gr[gr] &= 0xffff
         if val & 0x8000:
             self.state.sf = 1
         else:
@@ -244,11 +250,6 @@ All rights reserved.""")
             self.state.zf = 1
         else:
             self.state.zf = 0
-        if val >= 0x10000:
-            self.state.of = 1
-        else:
-            self.state.of = 0
-        # overwrite OF if specified
         if of is not None:
             self.state.of = of
 
@@ -271,47 +272,83 @@ All rights reserved.""")
         self.state.pr += 2
 
     def exec_ADDA_r_adr_x(self, inst, gr, adr, xr, eadr):
-        self.state.gr[gr] = unsigned(
-            signed(self.state.gr[gr]) + signed(self.memory[eadr]))
-        self.update_fr(gr)
+        v = signed(self.state.gr[gr]) + signed(self.memory[eadr])
+        if MIN_SIGNED <= v <= MAX_SIGNED:
+            of = 0
+        else:
+            of = 1
+        self.state.gr[gr] = unsigned(v)
+        self.update_fr(gr, of=of)
         self.state.pr += 2
 
     def exec_ADDA_r1_r2(self, inst, r1, adr, r2, eadr):
-        self.state.gr[r1] = unsigned(
-            signed(self.state.gr[r1]) + signed(self.gr[r2]))
-        self.update_fr(r1)
+        v = signed(self.state.gr[r1]) + signed(self.state.gr[r2])
+        if MIN_SIGNED <= v <= MAX_SIGNED:
+            of = 0
+        else:
+            of = 1
+        self.state.gr[r1] = unsigned(v)
+        self.update_fr(r1, of=of)
         self.state.pr += 1
 
     def exec_ADDL_r_adr_x(self, inst, gr, adr, xr, eadr):
-        self.state.gr[gr] = self.state.gr[gr] + self.memory[eadr]
-        self.update_fr(gr)
+        v = self.state.gr[gr] + self.memory[eadr]
+        if v >= 0x10000:
+            of = 1
+        else:
+            of = 0
+        self.state.gr[gr] = v & 0xffff
+        self.update_fr(gr, of=of)
         self.state.pr += 2
 
     def exec_ADDL_r1_r2(self, inst, r1, adr, r2, eadr):
-        self.state.gr[r1] = self.state.gr[r1] + self.state.gr[r2]
-        self.update_fr(r1)
+        v = self.state.gr[r1] + self.state.gr[r2]
+        if v >= 0x10000:
+            of = 1
+        else:
+            of = 0
+        self.state.gr[r1] = v & 0xffff
+        self.update_fr(r1, of=of)
         self.state.pr += 1
 
     def exec_SUBA_r_adr_x(self, inst, gr, adr, xr, eadr):
-        self.state.gr[gr] = unsigned(
-            signed(self.state.gr[gr]) - signed(self.memory[eadr]))
-        self.update_fr(gr)
+        v = signed(self.state.gr[gr]) - signed(self.memory[eadr])
+        if MIN_SIGNED <= v <= MAX_SIGNED:
+            of = 0
+        else:
+            of = 1
+        self.state.gr[gr] = unsigned(v)
+        self.update_fr(gr, of=of)
         self.state.pr += 2
 
     def exec_SUBA_r1_r2(self, inst, r1, adr, r2, eadr):
-        self.state.gr[r1] = unsigned(
-            signed(self.state.gr[r1]) - signed(self.state.gr[r2]))
-        self.update_fr(r1)
+        v = signed(self.state.gr[r1]) - signed(self.state.gr[r2])
+        if MIN_SIGNED <= v <= MAX_SIGNED:
+            of = 0
+        else:
+            of = 1
+        self.state.gr[r1] = unsigned(v)
+        self.update_fr(r1, of=of)
         self.state.pr += 1
 
     def exec_SUBL_r_adr_x(self, inst, gr, adr, xr, eadr):
-        self.state.gr[gr] = self.state.gr[gr] - self.memory[eadr]
-        self.update_fr(gr)
+        v = self.state.gr[gr] - self.memory[eadr]
+        if v < 0:
+            of = 1
+        else:
+            of = 0
+        self.state.gr[gr] = v & 0xffff
+        self.update_fr(gr, of=of)
         self.state.pr += 2
 
     def exec_SUBL_r1_r2(self, inst, r1, adr, r2, eadr):
-        self.state.gr[r1] = self.state.gr[r1] - self.state.gr[r2]
-        self.update_fr(r1)
+        v = self.state.gr[r1] - self.state.gr[r2]
+        if v < 0:
+            of = 1
+        else:
+            of = 0
+        self.state.gr[r1] = v & 0xffff
+        self.update_fr(r1, of=of)
         self.state.pr += 1
 
     def exec_AND_r_adr_x(self, inst, gr, adr, xr, eadr):
@@ -476,12 +513,12 @@ All rights reserved.""")
 
         try:
             subr = eval(f'Comet.exec_{nemonic}_{categ}')
-            self.debug(
-                f'exec_{nemonic}(#{inst:02x}, {gr}, #{adr:04x}, {xr}, #{eadr:04x})'
-            )
-            subr(self, inst, gr, adr, xr, eadr)
         except AttributeError:
-            die(f'illegal instruction #{inst:02x} at #{self.state.pr:04x}')
+            die(f'#{self.state.pr:04x}: {nemonic}_{categ} (#{inst:02x}) not implemented ')
+        self.debug(
+            f'exec_{nemonic}_{categ}(#{inst:02x}, {gr}, #{adr:04x}, {xr}, #{eadr:04x})'
+        )
+        subr(self, inst, gr, adr, xr, eadr)
 
     # ----------------------------------------------------------------
     def cmd_run(self, *args):
