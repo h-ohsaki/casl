@@ -85,7 +85,7 @@ def parse_number(v):
         if re.search(r'^[-+]?\d+$', v):
             return int(v) & 0xffff
         else:
-            m = re.search(r'^#([\da-zA-Z]+)$', v)
+            m = re.search(r'^#([\dA-F]+)$', v)
             if m:
                 # convert hex to decimal
                 return int(m.group(1), base=16) & 0xffff
@@ -139,7 +139,6 @@ class Instruction:
                     self.categ = categ
                     self.code = code
                     return
-            self.err_func(f"Invalid operand '{self._opr}' for '{self.op}'")
         self.err_func(f"Illegal instruction '{self.op}'")
 
 # ----------------------------------------------------------------
@@ -283,7 +282,7 @@ All rights reserved."""
             warn(f'{self.file}:{self.lineno}: {msg}')
 
     def error(self, msg):
-        die(f'{self.file}:{self.lineno}: {msg}')
+        die(f'{self.file}:{self.lineno}: {msg}\n->{self.line}')
 
     def check_decimal(self, number):
         """Check the validity of decimal number NUMBER.  If not valid, display
@@ -312,7 +311,7 @@ All rights reserved."""
         else:
             self.error('syntax error')
         if op:
-            return label, Instruction(op, opr)
+            return label, Instruction(op, opr, err_func=self.error)
         else:
             return label, None
 
