@@ -32,8 +32,8 @@ VERSION = 0.4
 MAX_SIGNED = 32767
 MIN_SIGNED = -32768
 
-# COMET II instructions: the key for each entry is op code, and its corresponding 
-# value is a tuple of the instruction type and the mnemonic. 
+# COMET II instructions: the key for each entry is op code, and its corresponding
+# value is a tuple of the instruction type and the mnemonic.
 INSTTBL = {
     # op code : (type, mnemonic)
     0x00: ('nopr', 'NOP'),
@@ -237,20 +237,20 @@ All rights reserved.""")
             val = self.state.gr[gr]
             self.state.gr[gr] &= 0xffff
         if val & 0x8000:
-            self.sf = 1
+            self.state.sf = 1
         else:
-            self.sf = 0
+            self.state.sf = 0
         if val == 0:
-            self.zf = 1
+            self.state.zf = 1
         else:
-            self.zf = 0
+            self.state.zf = 0
         if val >= 0x10000:
-            self.of = 1
+            self.state.of = 1
         else:
-            self.of = 0
+            self.state.of = 0
         # overwrite OF if specified
         if of is not None:
-            self.of = of
+            self.state.of = of
 
     def exec_LD_r_adr_x(self, inst, gr, adr, xr, eadr):
         self.state.gr[gr] = self.memory[eadr]
@@ -278,7 +278,7 @@ All rights reserved.""")
 
     def exec_ADDA_r1_r2(self, inst, r1, adr, r2, eadr):
         self.state.gr[r1] = unsigned(
-            signed(self.state.gr[r1]) + signed(self.state.gr[r2]))
+            signed(self.state.gr[r1]) + signed(self.gr[r2]))
         self.update_fr(r1)
         self.state.pr += 1
 
@@ -450,6 +450,10 @@ All rights reserved.""")
         self.state.pr = eadr
 
     def exec_RET_nopr(self, inst, gr, adr, xr, eadr):
+        # return to OS if the stack is empty
+        if self.state.sp >= 0xffff:
+            print('Program terminated.')
+            sys.exit()
         self.state.pr = self.memory[self.state.sp]
         self.state.sp += 1
 
@@ -535,20 +539,21 @@ All rights reserved.""")
     def cmd_print(self, *args):
         # obtain instruction and operand at the current PC
         categ, inst, opr, size = self.parse()
+        pr = self.state.pr
+        sp = self.state.sp
         gr = self.state.gr
         of, sf, zf = self.state.of, self.state.sf, self.state.zf
-        print(""
-              f"PR  #{self.state.pr:04x} [ {inst} {opr} ]\n"
-              f"SP  #{self.state.sp:04x}\n"
-              f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
-              f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
-              f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) "
-              f"GR3 #{gr[3]:04x} ({signed(gr[3]):6})\n"
-              f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
-              f"GR5 #{gr[5]:04x} ({signed(gr[5]):6}) "
-              f"GR6 #{gr[6]:04x} ({signed(gr[6]):6}) "
-              f"GR7 #{gr[7]:04x} ({signed(gr[7]):6})\n"
-              f"OF:{of} SF:{sf} ZF:{zf}\n")
+        print(
+            ""
+            f"PR  #{pr:04x} [ {inst:4} {opr:18} ] SP  #{sp:04x}\t\tOF:{of} / SF:{sf} / ZF:{zf}\n"
+            f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
+            f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
+            f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) "
+            f"GR3 #{gr[3]:04x} ({signed(gr[3]):6})\n"
+            f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
+            f"GR5 #{gr[5]:04x} ({signed(gr[5]):6}) "
+            f"GR6 #{gr[6]:04x} ({signed(gr[6]):6}) "
+            f"GR7 #{gr[7]:04x} ({signed(gr[7]):6})")
 
     def cmd_dump(self, *args):
         try:
