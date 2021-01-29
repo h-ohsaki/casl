@@ -504,7 +504,7 @@ All rights reserved.""")
         # calcurate the effective address
         word, inst, gr, adr, xr = self.decode(self.state.pr)
         eadr = adr
-        if 1 <= xr <= 4:
+        if xr > 0:
             eadr += self.state.gr[xr]
         eadr &= 0xffff
 
@@ -514,7 +514,8 @@ All rights reserved.""")
         try:
             subr = eval(f'Comet.exec_{nemonic}_{categ}')
         except AttributeError:
-            die(f'#{self.state.pr:04x}: {nemonic}_{categ} (#{inst:02x}) not implemented ')
+            die(f'#{self.state.pr:04x}: {nemonic}_{categ} (#{inst:02x}) not implemented '
+                )
         self.debug(
             f'exec_{nemonic}_{categ}(#{inst:02x}, {gr}, #{adr:04x}, {xr}, #{eadr:04x})'
         )
@@ -597,24 +598,27 @@ All rights reserved.""")
             addr = parse_number(args[0])
         except IndexError:
             addr = self.state.pr
-        for row in range(16):
-            base = addr + (row << 3)
-            print(f'{base:04x}', end='')
-            for col in range(8):
-                v = self.memory[base + col]
-                print(f' {v:04x}', end='')
-            print(' ', end='')
-            for col in range(8):
-                v = self.memory[base + col] & 0xff
-                if 0x20 <= v <= 0x7f:
-                    c = chr(v)
-                else:
-                    c = '.'
-                print(c, end='')
+        try:
+            for row in range(16):
+                base = addr + (row << 3)
+                print(f'{base:04x}', end='')
+                for col in range(8):
+                    v = self.memory[base + col]
+                    print(f' {v:04x}', end='')
+                print(' ', end='')
+                for col in range(8):
+                    v = self.memory[base + col] & 0xff
+                    if 0x20 <= v <= 0x7f:
+                        c = chr(v)
+                    else:
+                        c = '.'
+                    print(c, end='')
+                print()
+        except IndexError:
             print()
 
     def cmd_stack(self, *args):
-        addr = self.state.gr[4]
+        addr = self.state.sp
         self.cmd_dump(addr)
 
     def cmd_file(self, *args):
