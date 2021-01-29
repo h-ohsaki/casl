@@ -170,7 +170,7 @@ class LabelTable:
         """Check the validity of label LABEL.  If not valid, display error and
         exit."""
         self.debug_func(f'check_label({self}, {label})')
-        if not re.search(r'^[A-Z][0-9A-Za-z]{0,5}$', label):
+        if not re.search(r'^([A-Z][0-9A-Za-z]{0,5}|=[0-9A-F#-]+)$', label):
             self.err_func(f"invalid label '{label}'")
 
     def register(self, label, val):
@@ -254,10 +254,10 @@ class Assembler:
         self.enable_debug = debug
         self.buf = []
         self.memory = Memory(debug_func=self.debug, assembler=self)
-        self.labeltbl = LabelTable(debug_func=self.debug, assembler=self)
+        self.labeltbl = LabelTable(debug_func=self.debug, err_func=self.error, assembler=self)
+        self.literals = {}
 
         self.start_addr = 0
-        self.end_addr = 0
         self.lineno = None
         self.line = None
 
@@ -362,7 +362,6 @@ All rights reserved."""
                                   single_word=True)
         self.addr += 1
 
-    # START instruction
     def generate_start(self, label, inst):
         self.debug(f'generate_start({self}, {label}, {inst})')
         if not label:
@@ -372,16 +371,13 @@ All rights reserved."""
             self.addr = self.start_addr
         self.in_block = True
 
-    # END instruction
     def generate_end(self, label, inst):
         if label:
             self.error("can't use label '{label}' at END")
         if inst.noprs > 0:
             self.error(f"END accepts no operand '{inst}'")
-        self.end_addr = self.addr - 1
         self.in_block = False
 
-    # DS instruction
     def generate_ds(self, label, inst):
         if inst.noprs != 1:
             self.error(f"DS exepects a single operand '{inst}'")
@@ -390,7 +386,6 @@ All rights reserved."""
             self.memory[self.addr] = 0
             self.addr += 1
 
-    # DC instruction
     def generate_dc(self, label, inst):
         m = re.search(r"^'([^\']+)'$", inst._opr)
         if m:
@@ -419,6 +414,16 @@ All rights reserved."""
         else:
             self.error(f"instruction type '{inst.categ}' not implemented")
 
+    def generate_literals(self):
+        self.debug(f'generate_literals({self})')
+        for literal in self.literals.keys():
+            # literal always starts with = (e.g., '=-123', '=#32f4')
+            val = parse_number(literal[1:])
+            if val is not None:
+                self.labeltbl.register(literal, self.addr)
+                self.memory[self.addr] = val
+                self.addr += 1
+
     def pass1(self):
         """Parse the source file FILE, register all symbols to LABELTBL, and
         generate code in MEMORY."""
@@ -437,8 +442,12 @@ All rights reserved."""
             # generate object code according the type of instruction
             if inst:
                 self.generate(label, inst)
+                # register all literals
+                if inst.noprs >= 2 and inst.opr2.startswith('='):
+                    self.literals[inst.opr2] = True
         if self.in_block:
             self.error("No 'END' instruction found")
+        self.generate_literals()
 
     def pass2(self):
         """Open the output file, and dump the assembled object code."""
@@ -449,7 +458,7 @@ All rights reserved."""
             # print object header
             f.write(struct.pack('>4sH10x', b'CASL', self.start_addr))
             # dump memory image
-            for addr in range(self.start_addr, self.end_addr + 1):
+            for addr in range(self.start_addr, self.addr):
                 val = self.memory[addr]
                 v = self.labeltbl.expand(val)
                 f.write(struct.pack('>H', v))
@@ -458,7 +467,7 @@ All rights reserved."""
         self.debug(f'dump_memory({self})')
         print('CASL LISTING file')
         last_lineno = None
-        for addr in range(self.start_addr, self.end_addr + 1):
+        for addr in range(self.start_addr, self.addr):
             val = self.memory[addr]
             v = self.labeltbl.expand(val)
             file, lineno, line = self.memory.src_at(addr)
