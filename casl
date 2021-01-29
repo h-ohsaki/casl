@@ -29,7 +29,7 @@ VERSION = 0.4
 
 # COMET II instructions: the key for each entry is op code, and its corresponding
 # value is a tuple of the instruction type and the mnemonic.
-_INSTTBL = {
+INSTTBL = {
     # op code : (type, mnemonic)
     0x00: ('nopr', 'NOP'),
     0x10: ('r_adr_x', 'LD'),
@@ -71,15 +71,6 @@ _INSTTBL = {
     0xf0: ('adr_x', 'SVC'),
 }
 
-INSTTBL = {}
-for inst, val in _INSTTBL.items():
-    categ, mnemonic = val
-    INSTTBL[mnemonic] = categ, inst
-INSTTBL['START'] = ('start', None)
-INSTTBL['END'] = ('end', None)
-INSTTBL['DS'] = ('ds', None)
-INSTTBL['DC'] = ('dc', None)
-
 def usage():
     die(f"""\
 usage: {sys.argv[0]} [-av] file...
@@ -103,13 +94,10 @@ def parse_number(v):
 # ----------------------------------------------------------------
 class Instruction:
     def __init__(self, op, opr, err_func=die):
-        try:
-            categ, code = INSTTBL[op]
-        except IndexError:
-            err_func(f"illegal instruction '{op}'")
-
         self.op = op
-        self.opr = opr  # raw operands
+        self._opr = opr  # save raw operands
+        self.err_func = err_func
+
         if opr is None:
             oprs = []
         else:
@@ -118,11 +106,41 @@ class Instruction:
         self.opr1 = oprs[0] if self.noprs >= 1 else None
         self.opr2 = oprs[1] if self.noprs >= 2 else None
         self.opr3 = oprs[2] if self.noprs >= 3 else None
-        self.code = code  # op code
-        self.categ = categ  # instruction type
+        self.parse_op()
 
     def __repr__(self):
-        return f'Instruction(op={self.op}, opr={self.opr}, noprs={self.noprs}, categ={self.categ})'
+        return f'Instruction(op={self.op}, opr={self._opr}, noprs={self.noprs}, categ={self.categ})'
+
+    def guess_type(self):
+        if self.noprs == 0:
+            return ['nopr']
+        elif self.noprs == 1:
+            return ['r']
+        elif self.noprs == 2:
+            if re.search(r'^GR[0-7]$', self.opr2):
+                return ['r1_r2', 'adr_x']
+            else:
+                return ['r_adr_x']
+        else:
+            return ['r_adr_x']
+
+    def parse_op(self):
+        if self.op in ['START', 'END', 'DS', 'DC']:
+            self.categ = self.op.lower()
+            return
+
+        categs = self.guess_type()
+        for code, val in INSTTBL.items():
+            categ, mnemonic = val
+            if self.op != mnemonic:
+                continue
+            for c in categs:
+                if categ == c:
+                    self.categ = categ
+                    self.code = code
+                    return
+            self.err_func(f"Invalid operand '{self._opr}' for '{self.op}'")
+        self.err_func(f"Illegal instruction '{self.op}'")
 
 # ----------------------------------------------------------------
 class LabelTable:
@@ -221,7 +239,7 @@ class Memory:
     def generate_code(self, addr, inst, gr, adr, xr, single_word=False):
         """Generate two-word code from INST, GR, ADR, and XR at ADDRESS."""
         self.debug_func(
-            f'generate_code({self}, {addr:04x}, {inst:02x}, {gr}, {adr}, {xr})'
+            f'generate_code({self}, {addr:04x}, inst={inst:02x}, gr={gr}, adr={adr}, xr={xr})'
         )
         gr = self._register_number(gr)
         xr = self._register_number(xr)
@@ -308,8 +326,12 @@ All rights reserved."""
     def generate_r1_r2(self, label, inst):
         if not (inst.noprs == 2):
             self.error(f"missing operands '{inst}'")
-        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, inst.opr2,
-                                single_word=True  )
+        self.memory.generate_code(self.addr,
+                                  inst.code,
+                                  inst.opr1,
+                                  None,
+                                  inst.opr2,
+                                  single_word=True)
         self.addr += 1
 
     def generate_adr_x(self, label, inst):
@@ -322,13 +344,23 @@ All rights reserved."""
     def generate_r(self, label, inst):
         if inst.noprs != 1:
             self.error(f"expects just one operand '{inst}'")
-        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, None, single_word=True)
+        self.memory.generate_code(self.addr,
+                                  inst.code,
+                                  inst.opr1,
+                                  None,
+                                  None,
+                                  single_word=True)
         self.addr += 1
 
     def generate_nopr(self, label, inst):
         if inst.noprs > 0:
             self.error(f'invalid operand "{inst}"')
-        self.memory.generate_code(self.addr, inst.code, inst.opr1, None, None, single_word=True)
+        self.memory.generate_code(self.addr,
+                                  inst.code,
+                                  inst.opr1,
+                                  None,
+                                  None,
+                                  single_word=True)
         self.addr += 1
 
     # START instruction
@@ -361,7 +393,7 @@ All rights reserved."""
 
     # DC instruction
     def generate_dc(self, label, inst):
-        m = re.search(r"^'([^\']+)'$", inst.opr)
+        m = re.search(r"^'([^\']+)'$", inst._opr)
         if m:
             vals = bytearray(m.group(1), encoding='ascii')
             for c in vals:
@@ -459,7 +491,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 """
 DC 数値,数値…
   文字定数、アドレス定数(ラベル)
