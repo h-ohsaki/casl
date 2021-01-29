@@ -628,3 +628,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+命令語 1 or 2
+GR0-7 SP PR FR (3 bit)
+FR: OF SF ZF
+算術演算
+SVC, NOP
+
+"""    
