@@ -108,11 +108,11 @@ class Instruction:
             oprs = []
         else:
             oprs = re.split(r'[,\s]+', opr)
-        self.noprs = len(oprs)	# the number of valid operands
+        self.noprs = len(oprs)  # the number of valid operands
         self.opr1 = oprs[0] if self.noprs >= 1 else None
         self.opr2 = oprs[1] if self.noprs >= 2 else None
         self.opr3 = oprs[2] if self.noprs >= 3 else None
-        self.parse_inst()	# interpret the instruction
+        self.parse_inst()  # interpret the instruction
 
     def __repr__(self):
         return f'Instruction(op={self.op}, opr={self._opr}, noprs={self.noprs}, categ={self.categ})'
@@ -148,7 +148,7 @@ class Instruction:
             categ, mnemonic = val
             if self.op != mnemonic:
                 continue
-            # if the nemonic matches, find the op code from the number/type 
+            # if the nemonic matches, find the op code from the number/type
             # of operands
             for c in categs:
                 # FIXME: first match may fail if instructions have ambiguity
@@ -162,7 +162,7 @@ class Instruction:
 class LabelTable:
     def __init__(self, debug_func=warn, err_func=die, assembler=None):
         self.tbl = {}
-        self.src = {}	# for recording source lines
+        self.src = {}  # for recording source lines
         self.debug_func = debug_func
         self.err_func = err_func
         self.assembler = assembler
@@ -200,7 +200,7 @@ class LabelTable:
         self.check_label(label)
         if label in self.tbl:
             self.err_func(f"label '{label}' already defined")
-        self[label] = val	# FIXME: force to unsigned short?
+        self[label] = val  # FIXME: force to unsigned short?
 
     def expand(self, val):
         """Expand VAL to the corresponding unsigned short.  VAL can be
@@ -218,7 +218,7 @@ class LabelTable:
 class Memory:
     def __init__(self, debug_func=warn, err_func=die, assembler=None):
         self.memory = []
-        self.src = []	# for recording source lines
+        self.src = []  # for recording source lines
         self.debug_func = debug_func
         self.err_func = err_func
         self.assembler = assembler
@@ -260,14 +260,14 @@ class Memory:
         return int(m.group(1))
 
     def generate_code(self, addr, inst, gr, adr, xr, single_word=False):
-        """Generate instruction code from address ADDR.  The instruction is
-        specified by INST (op code), GR (GR register or R1), ADR (address),
-        and XR (index register or R2).  If SINGLE_WORD is True, generate a
-        single word.  Otherwise, generate two words."""
+        """Generate code from address ADDR.  The instruction is specified by
+        INST (op code), GR (GR register or R1), ADR (address), and XR (index
+        register or R2).  If SINGLE_WORD is True, generate a single word.
+        Otherwise, generate two words."""
         self.debug_func(
             f'generate_code(self={self}, addr={addr:04x}, inst={inst:02x}, gr={gr}, adr={adr}, xr={xr})'
         )
-        # the first word is composed of op code (8 bits), GR/R1 register 
+        # the first word is composed of op code (8 bits), GR/R1 register
         # (4 bits), and XR/R2 register (4 bits)
         gr = self.register_number(gr)
         xr = self.register_number(xr)
@@ -289,6 +289,7 @@ class Assembler:
                                    assembler=self)
         self.literals = {}
         self.start_addr = 0
+        self.addr = 0
         self.lineno = None
         self.line = None
 
@@ -307,7 +308,7 @@ All rights reserved."""
         with open(file) as f:
             self.file = file
             for lineno, line in enumerate(f):
-                line = line.rstrip()	# remove the trailing CR+LF
+                line = line.rstrip()  # remove the trailing CR+LF
                 self.buf.append(line)
 
     def debug(self, msg):
@@ -316,17 +317,6 @@ All rights reserved."""
 
     def error(self, msg):
         die(f'{self.file}:{self.lineno}: {msg}\n->{self.line}')
-
-    def remove_comment(self, line):
-        """Remove comment from the line LINE."""
-        # regexp for splitting non-comment and comment parts
-        # line format (CASL II specification):
-        # - comment starts with semicolon ';'
-        # - semicolon may appear in strings (e.g., DC assembler instruction)
-        m = re.search(r"^([^';]*('[^']*'[^';]*)*)\s*;.*$", line)
-        if m:
-            line = m.groups(1)
-        return line
 
     def parse_line(self, line):
         """Parse line LINE and extract the label (if specified) and the
@@ -344,7 +334,7 @@ All rights reserved."""
             return label, None
 
     def generate_r_adr_x(self, label, inst):
-        """Generate two-words instruction for instruction INST at the current
+        """Generate two-words code for instruction INST at the current
         address.  The instruction takes at most three operands: GR, ADDRESS,
         and XR."""
         if not (2 <= inst.noprs <= 3):
@@ -354,7 +344,7 @@ All rights reserved."""
         self.addr += 2
 
     def generate_r1_r2(self, label, inst):
-        """Generate two-words instruction for instruction INST at the current
+        """Generate two-words code for instruction INST at the current
         address.  The instruction takes two operands: R1 and R2."""
         if not (inst.noprs == 2):
             self.error(f"missing operands '{inst}'")
@@ -367,7 +357,7 @@ All rights reserved."""
         self.addr += 1
 
     def generate_adr_x(self, label, inst):
-        """Generate two-words instruction for instruction INST at the current
+        """Generate two-words code for instruction INST at the current
         address.  The instruction takes at most two operands: ADDRESS and
         XR."""
         if not (1 <= inst.noprs <= 2):
@@ -377,7 +367,7 @@ All rights reserved."""
         self.addr += 2
 
     def generate_r(self, label, inst):
-        """Generate one-word instruction for instruction INST at the current
+        """Generate one-word code for instruction INST at the current
         address.  The instruction takes a single operand: R."""
         if inst.noprs != 1:
             self.error(f"expects just one operand '{inst}'")
@@ -390,7 +380,7 @@ All rights reserved."""
         self.addr += 1
 
     def generate_nopr(self, label, inst):
-        """Generate one-word instruction for instruction INST at the current
+        """Generate one-word code for instruction INST at the current
         address.  The instruction takes no operand."""
         if inst.noprs > 0:
             self.error(f'invalid operand "{inst}"')
@@ -405,7 +395,6 @@ All rights reserved."""
     def generate_start(self, label, inst):
         """Handler for START assembler instruction.  START assembler
         instruction specifies the start address of the program."""
-        self.debug(f'generate_start({self}, {label}, {inst})')
         if not label:
             self.error("no label found at START")
         if inst.opr1 is not None:
@@ -430,28 +419,14 @@ All rights reserved."""
         # FIXME: DS accepts only decimal argument (CASL II specification)
         v = parse_number(inst.opr1)
         if v is None:
-            self.error(f"DS exepects a single numeric argument '{inst}'")            
+            self.error(f"DS exepects a single numeric argument '{inst}'")
         for n in range(v):
             self.memory[self.addr] = 0
             self.addr += 1
 
-    def split_opr(self, opr):
-        oprs = []
-        while True:
-            print(f'**<{opr}> {oprs}')
-            m = re.search(r"^('(.*)(''.*)*')( *, *(.+))?$", opr)
-            if m:
-                print(m)
-                oprs.append(m.group(1))
-                opr = m.group(5)
-            m = re.search(r"^(.+)( *, *(.+))?$", opr)
-            if m:
-                oprs.append(m.group(1))
-                opr = m.group(3)
-            break
-        return oprs + [opr]
-
     def generate_dc(self, label, inst):
+        """Handler for DC assembler instruction.  DC assembler instruction
+        allocates a word with the specified value for every argument."""
         # parse DC arguments with regexp
         # this regexp matches either string or numeric argument with its (optional)
         # following comma separator
@@ -479,6 +454,8 @@ All rights reserved."""
                     self.error(f"invalid numeric argument for DC '{opr}'")
 
     def generate_rpush(self, label, inst):
+        """Expand RPUSH macro and generate code for pushing registers GR1
+        through GR7."""
         code = """\
         PUSH	0, GR1
         PUSH	0, GR2
@@ -487,12 +464,11 @@ All rights reserved."""
         PUSH	0, GR5
         PUSH	0, GR6
         PUSH	0, GR7"""
-        for line in code.splitlines():
-            line = line.rstrip()
-            label, inst = self.parse_line(line)
-            self.generate(label, inst)
+        self.generate_lines(code.splitlines())
 
     def generate_rpop(self, label, inst):
+        """Expand RPOP macro and generate code for popping registers GR7
+        through GR1."""
         code = """\
 	POP	GR7
 	POP	GR6
@@ -504,6 +480,9 @@ All rights reserved."""
         self.generate_lines(code.splitlines())
 
     def generate_in(self, label, inst):
+        """Expand IN macro and generate code for reading a record from the
+        input device.  'IN IBUF, LEN' stores the record and its size at IBUF
+        and LEN."""
         if inst.noprs != 2:
             self.error('IN macro requires two labels')
         code = f"""\
@@ -517,6 +496,9 @@ All rights reserved."""
         self.generate_lines(code.splitlines())
 
     def generate_out(self, label, inst):
+        """Expand OUT macro and generate code for writing a record to the
+        output device.  'OUT OBUF, LEN' writes LEN words of data starting from
+        OBUF."""
         if inst.noprs != 2:
             self.error('OUT macro requires two labels')
         code = f"""\
@@ -529,8 +511,20 @@ All rights reserved."""
         POP	GR1"""
         self.generate_lines(code.splitlines())
 
+    def remove_comment(self, line):
+        """Remove comment from the line LINE."""
+        # regexp for splitting non-comment and comment parts
+        # line format (CASL II specification):
+        # - comment starts with semicolon ';'
+        # - semicolon may appear in strings (e.g., DC assembler instruction)
+        m = re.search(r"^([^';]*('[^']*'[^';]*)*)\s*;.*$", line)
+        if m:
+            line = m.groups(1)
+        return line
+
     def generate(self, label, inst):
-        self.debug(f'generate({self}, {label}, {inst})')
+        """Generate code at the current address for the instruction INST."""
+        self.debug(f'generate(self={self}, label={label}, ist={inst})')
         # START must be the first instruction
         if not self.in_block and inst.categ != 'start':
             self.error(f"no START directive found")
@@ -540,24 +534,19 @@ All rights reserved."""
 
         subr = eval(f'Assembler.generate_{inst.categ}')
         if callable(subr):
+            self.debug(
+                f'generate_{inst.categ}(self={self}, label={label}, ist={inst})'
+            )
             subr(self, label, inst)
         else:
             self.error(f"instruction type '{inst.categ}' not implemented")
 
-    def generate_literals(self):
-        self.debug(f'generate_literals({self})')
-        for literal in self.literals.keys():
-            # literal always starts with = (e.g., '=-123', '=#32f4')
-            val = parse_number(literal[1:])
-            if val is not None:
-                self.labeltbl.register(literal, self.addr)
-                self.memory[self.addr] = val
-                self.addr += 1
-
     def generate_lines(self, lines):
-        self.debug(f'generate_lines({self}, {lines})')
+        """Generate codes starting from the current address for lines stored
+        in LINES, which can be either the full program or a fragment."""
+        self.debug(f'generate_lines(self={self}, lines={lines})')
         for line in lines:
-            self.debug(line)
+            self.debug(f'generate_lines: {line}')
             line = self.remove_comment(line)
             if line == '':
                 continue
@@ -573,9 +562,23 @@ All rights reserved."""
                 if inst.noprs >= 2 and inst.opr2.startswith('='):
                     self.literals[inst.opr2] = True
 
+    def generate_literals(self):
+        """Allocate memory for all literals (i.e., adress operand starting
+        with '=') used in the program."""
+        self.debug(f'generate_literals(self={self})')
+        for literal in self.literals.keys():
+            # literal always starts with = (e.g., '=-123', '=#32f4')
+            val = parse_number(literal[1:])
+            if val is not None:
+                self.labeltbl.register(literal, self.addr)
+                self.memory[self.addr] = val
+                self.addr += 1
+
     def pass1(self):
-        """Parse the source file FILE, register all symbols to LABELTBL, and
-        generate code in MEMORY."""
+        """Parse the source code stored in the buffer and generate code in the
+        memory with pending (i.e., non-resolved) labels.  The source code must
+        have been loaded with load() method."""
+        self.debug(f'pass1(self={self})')
         self.addr = 0
         self.in_block = False
         for self.lineno, self.line in enumerate(self.buf):
@@ -585,8 +588,8 @@ All rights reserved."""
         self.generate_literals()
 
     def pass2(self):
-        """Open the output file, and dump the assembled object code."""
-        self.debug(f'pass2({self})')
+        """Open the output file and dump the assembled object code."""
+        self.debug(f'pass2(self={self})')
         base = re.sub(r'\.cas', '', self.file, flags=re.I)
         outfile = base + '.com'
         with open(outfile, 'wb') as f:
@@ -595,14 +598,16 @@ All rights reserved."""
             # dump memory image
             for addr in range(self.start_addr, self.addr):
                 val = self.memory[addr]
-                # FIXME: CASL II specification requires undefined labels are
-                # regarded as start addresses of other programs
+                # FIXME: undefined labels must be regarded as start addresses
+                # of other programs (CASL II specification)
                 v = self.labeltbl.expand(val)
                 f.write(struct.pack('>H', v))
 
     def dump_memory(self):
-        self.debug(f'dump_memory({self})')
-        print('CASL LISTING file')
+        """Dump the assembled object code to the standard output with
+        corresponding source lines."""
+        self.debug(f'dump_memory(self={self})')
+        print('CASL LISTING')
         last_lineno = None
         for addr in range(self.start_addr, self.addr):
             val = self.memory[addr]
@@ -616,7 +621,8 @@ All rights reserved."""
                 print(f'{lineno:4}      {v:04x}')
 
     def dump_labels(self):
-        self.debug(f'dump_label({self})')
+        """Dump all defined labels to the standard output."""
+        self.debug(f'dump_label(self={self})')
         print('\nDEFINED LABELS')
         for label in self.labeltbl.keys():
             file, lineno = self.labeltbl.src_for(label)
