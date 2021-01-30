@@ -115,7 +115,7 @@ class Instruction:
         if self.noprs == 0:
             return ['nopr']
         elif self.noprs == 1:
-            return ['r']
+            return ['r', 'adr_x']
         elif self.noprs == 2:
             if re.search(r'^GR[0-7]$', self.opr2):
                 return ['r1_r2', 'adr_x']
@@ -125,10 +125,9 @@ class Instruction:
             return ['r_adr_x']
 
     def parse_op(self):
-        if self.op in ['START', 'END', 'DS', 'DC']:
+        if self.op in ['START', 'END', 'DS', 'DC', 'RPUSH', 'RPOP', 'IN', 'OUT']:
             self.categ = self.op.lower()
             return
-
         categs = self.guess_type()
         for code, val in INSTTBL.items():
             categ, mnemonic = val
@@ -139,7 +138,7 @@ class Instruction:
                     self.categ = categ
                     self.code = code
                     return
-        self.err_func(f"Illegal instruction '{self.op}'")
+        self.err_func(f"illegal instruction '{self.op}' {categs}")
 
 # ----------------------------------------------------------------
 class LabelTable:
@@ -230,7 +229,7 @@ class Memory:
         self.debug_func(f'_register_number({self}, {reg})')
         if reg is None:
             return 0
-        m = re.search(r'^GR([0-4])$', reg)
+        m = re.search(r'^GR([0-7])$', reg)
         if not m:
             self.err_func(f"invalid register '{reg}'")
         return int(m.group(1))
@@ -309,7 +308,7 @@ All rights reserved."""
             label, op, opr = m.group(1), m.group(2), m.group(4)
             self.debug(f'label/op/opr = {label}/{op}/{opr}')
         else:
-            self.error('syntax error')
+            self.error(f'syntax error {line}')
         if op:
             return label, Instruction(op, opr, err_func=self.error)
         else:
@@ -398,6 +397,67 @@ All rights reserved."""
             self.addr += 1
         else:
             self.error(f"DC accepts a word count or a string '{inst}'")
+
+    def generate_rpush(self, label, inst):
+        code = """\
+        PUSH	0, GR1
+        PUSH	0, GR2
+        PUSH	0, GR3
+        PUSH	0, GR4
+        PUSH	0, GR5
+        PUSH	0, GR6
+        PUSH	0, GR7"""
+        for line in code.splitlines():
+            line = line.rstrip()
+            label, inst = self._parse_line(line)
+            self.generate(label, inst)
+
+    def generate_rpop(self, label, inst):
+        code = """\
+	POP	GR7
+	POP	GR6
+	POP	GR5
+	POP	GR4
+	POP	GR3
+	POP	GR2
+	POP	GR1"""
+        for line in code.splitlines():
+            line = line.rstrip()
+            label, inst = self._parse_line(line)
+            self.generate(label, inst)
+
+    def generate_in(self, label, inst):
+        if inst.noprs != 2:
+            self.error('IN macro requires two labels')
+        code = f"""\
+        PUSH	0, GR1
+        PUSH	0, GR2
+        LAD	GR1, {inst.opr1}
+        LAD	GR2, {inst.opr2}
+        SVC	1
+        POP	GR2
+        POP	GR1"""
+        for line in code.splitlines():
+            line = line.rstrip()
+            label, inst = self._parse_line(line)
+            self.generate(label, inst)
+
+    def generate_out(self, label, inst):
+        if inst.noprs != 2:
+            self.error('OUT macro requires two labels')
+        code = f"""\
+        PUSH	0, GR1
+        PUSH	0, GR2
+        LAD	GR1, {inst.opr1}
+        LAD	GR2, {inst.opr2}
+        SVC	2
+        POP	GR2
+        POP	GR1"""
+        for line in code.splitlines():
+            line = line.rstrip()
+            label, inst = self._parse_line(line)
+            self.generate(label, inst)
+
 
     def generate(self, label, inst):
         self.debug(f'generate({self}, {label}, {inst})')
@@ -501,19 +561,12 @@ if __name__ == "__main__":
     main()
 """
 DC 数値,数値…
-  文字定数、アドレス定数(ラベル)
   ''
-RPUSH   PUSH GR1..GR7
-RPOP    POP GR7...GR1
-START label のみ
-
 IN MAX 256, EOF -1
 OUT 上位8ビットは無視される、長さ >=0、GR保存、FR不定
-  リテラルの? DC は END の直前
 
-adr =123   DC 123 を生成し、そのアドレス
-
-未定義ラベルは別の START とみなす
+# START label のみ
+# 未定義ラベルは別の START とみなす
 
 マクロ命令の例
   SVC 1
