@@ -21,6 +21,7 @@
 import re
 import struct
 import sys
+import csv
 
 from perlcompat import die, warn, getopts
 import tbdump
@@ -85,7 +86,7 @@ def parse_number(v):
         if re.search(r'^[-+]?\d+$', v):
             return int(v) & 0xffff
         else:
-            m = re.search(r'^#([\dA-F]+)$', v)
+            m = re.search(r'^#([\dA-F]{4})$', v)
             if m:
                 # convert hex to decimal
                 return int(m.group(1), base=16) & 0xffff
@@ -125,7 +126,9 @@ class Instruction:
             return ['r_adr_x']
 
     def parse_op(self):
-        if self.op in ['START', 'END', 'DS', 'DC', 'RPUSH', 'RPOP', 'IN', 'OUT']:
+        if self.op in [
+                'START', 'END', 'DS', 'DC', 'RPUSH', 'RPOP', 'IN', 'OUT'
+        ]:
             self.categ = self.op.lower()
             return
         categs = self.guess_type()
@@ -253,7 +256,9 @@ class Assembler:
         self.enable_debug = debug
         self.buf = []
         self.memory = Memory(debug_func=self.debug, assembler=self)
-        self.labeltbl = LabelTable(debug_func=self.debug, err_func=self.error, assembler=self)
+        self.labeltbl = LabelTable(debug_func=self.debug,
+                                   err_func=self.error,
+                                   assembler=self)
         self.literals = {}
 
         self.start_addr = 0
@@ -366,6 +371,7 @@ All rights reserved."""
         if not label:
             self.error("no label found at START")
         if inst.opr1 is not None:
+            # FIXME: CASL II specification only allows labels, not numbers
             self.start_addr = parse_number(inst.opr1)
             self.addr = self.start_addr
         self.in_block = True
@@ -385,18 +391,48 @@ All rights reserved."""
             self.memory[self.addr] = 0
             self.addr += 1
 
+    def split_opr(self, opr):
+        oprs = []
+        while True:
+            print(f'**<{opr}> {oprs}')
+            m = re.search(r"^('(.*)(''.*)*')( *, *(.+))?$", opr)
+            if m:
+                print(m)
+                oprs.append(m.group(1))
+                opr = m.group(5)
+            m = re.search(r"^(.+)( *, *(.+))?$", opr)
+            if m:
+                oprs.append(m.group(1))
+                opr = m.group(3)
+            break
+        return oprs + [opr]
+
     def generate_dc(self, label, inst):
-        m = re.search(r"^'([^\']+)'$", inst._opr)
-        if m:
-            vals = bytearray(m.group(1), encoding='ascii')
-            for c in vals:
-                self.memory[self.addr] = c
-                self.addr += 1
-        elif inst.noprs == 1:  # number or label
-            self.memory[self.addr] = inst.opr1
-            self.addr += 1
-        else:
-            self.error(f"DC accepts a word count or a string '{inst}'")
+        # parse DC arguments with regexp
+        # this regexp matches either string or numeric argument with its (optional)
+        # following comma separator
+        # CASL II DC assembler instruction specification:
+        # - arguments are separated by comma (,) with optional surrounding spaces
+        # - string is quoted by single quote (')
+        # - quote char in string is escaped by double quotes ('')
+        # - string may contain commad
+        for m in re.finditer(r"\s*('[^']*(''[^']*)*'|[^',]+)(\s*,\s*)?",
+                             inst._opr):
+            opr = m.group(1)
+            if opr.startswith("'"):
+                # NOTE: the first and the last chars must be single quote
+                astr = opr[1:-1]
+                astr = astr.replace("''", "'")
+                for c in astr:
+                    self.memory[self.addr] = ord(c) & 0xff
+                    self.addr += 1
+            else:
+                val = parse_number(opr)
+                if val is not None:
+                    self.memory[self.addr] = val
+                    self.addr += 1
+                else:
+                    self.error(f"invalid numeric argument for DC '{opr}'")
 
     def generate_rpush(self, label, inst):
         code = """\
@@ -421,10 +457,7 @@ All rights reserved."""
 	POP	GR3
 	POP	GR2
 	POP	GR1"""
-        for line in code.splitlines():
-            line = line.rstrip()
-            label, inst = self._parse_line(line)
-            self.generate(label, inst)
+        self.generate_lines(code.splitlines())
 
     def generate_in(self, label, inst):
         if inst.noprs != 2:
@@ -437,10 +470,7 @@ All rights reserved."""
         SVC	1
         POP	GR2
         POP	GR1"""
-        for line in code.splitlines():
-            line = line.rstrip()
-            label, inst = self._parse_line(line)
-            self.generate(label, inst)
+        self.generate_lines(code.splitlines())
 
     def generate_out(self, label, inst):
         if inst.noprs != 2:
@@ -453,11 +483,7 @@ All rights reserved."""
         SVC	2
         POP	GR2
         POP	GR1"""
-        for line in code.splitlines():
-            line = line.rstrip()
-            label, inst = self._parse_line(line)
-            self.generate(label, inst)
-
+        self.generate_lines(code.splitlines())
 
     def generate(self, label, inst):
         self.debug(f'generate({self}, {label}, {inst})')
@@ -484,14 +510,11 @@ All rights reserved."""
                 self.memory[self.addr] = val
                 self.addr += 1
 
-    def pass1(self):
-        """Parse the source file FILE, register all symbols to LABELTBL, and
-        generate code in MEMORY."""
-        self.addr = 0
-        self.in_block = False
-        for self.lineno, self.line in enumerate(self.buf):
-            self.debug(self.line)
-            line = self._remove_comment(self.line)
+    def generate_lines(self, lines):
+        self.debug(f'generate_lines({self}, {lines})')
+        for line in lines:
+            self.debug(line)
+            line = self._remove_comment(line)
             if line == '':
                 continue
             label, inst = self._parse_line(line)
@@ -505,6 +528,14 @@ All rights reserved."""
                 # register all literals
                 if inst.noprs >= 2 and inst.opr2.startswith('='):
                     self.literals[inst.opr2] = True
+
+    def pass1(self):
+        """Parse the source file FILE, register all symbols to LABELTBL, and
+        generate code in MEMORY."""
+        self.addr = 0
+        self.in_block = False
+        for self.lineno, self.line in enumerate(self.buf):
+            self.generate_lines([self.line])
         if self.in_block:
             self.error("No 'END' instruction found")
         self.generate_literals()
@@ -520,6 +551,8 @@ All rights reserved."""
             # dump memory image
             for addr in range(self.start_addr, self.addr):
                 val = self.memory[addr]
+                # FIXME: CASL II specification requires undefined labels are
+                # regarded as start addresses of other programs
                 v = self.labeltbl.expand(val)
                 f.write(struct.pack('>H', v))
 
@@ -559,15 +592,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-"""
-DC 数値,数値…
-  ''
-IN MAX 256, EOF -1
-OUT 上位8ビットは無視される、長さ >=0、GR保存、FR不定
-
-# START label のみ
-# 未定義ラベルは別の START とみなす
-
-マクロ命令の例
-  SVC 1
-"""
