@@ -25,7 +25,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.4
+VERSION = 0.5
 
 # COMET II instructions: the key for each entry is op code, and its corresponding
 # value is a tuple of the instruction type and the mnemonic.
@@ -107,7 +107,7 @@ class Instruction:
         if opr is None:
             oprs = []
         else:
-            oprs = re.split(r'[,\s]+', opr)
+            oprs = re.split(r'\s*,\s*', opr)
         self.noprs = len(oprs)  # the number of valid operands
         self.opr1 = oprs[0] if self.noprs >= 1 else None
         self.opr2 = oprs[1] if self.noprs >= 2 else None
@@ -283,7 +283,9 @@ class Assembler:
         self.file = None
         self.enable_debug = debug
         self.buf = []
-        self.memory = Memory(debug_func=self.debug, assembler=self)
+        self.memory = Memory(debug_func=self.debug,
+                             err_func=self.error,
+                             assembler=self)
         self.labeltbl = LabelTable(debug_func=self.debug,
                                    err_func=self.error,
                                    assembler=self)
@@ -519,7 +521,7 @@ All rights reserved."""
         # - semicolon may appear in strings (e.g., DC assembler instruction)
         m = re.search(r"^([^';]*('[^']*'[^';]*)*)\s*;.*$", line)
         if m:
-            line = m.groups(1)
+            line = m.group(1)
         return line
 
     def generate(self, label, inst):
