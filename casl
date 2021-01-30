@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# A simple implementation of CASL assembler.
+# A simple implementation of CASL II assembler.
 # Copyright (c) 2021, Hiroyuki Ohsaki.
 # All rights reserved.
 #
@@ -21,7 +21,6 @@
 import re
 import struct
 import sys
-import csv
 
 from perlcompat import die, warn, getopts
 import tbdump
@@ -74,18 +73,23 @@ INSTTBL = {
 
 def usage():
     die(f"""\
-usage: {sys.argv[0]} [-av] file...
+usage: {sys.argv[0]} [-avd] file...
  -a   turn on verbose listing
  -v   display version and exit
+ -d   enable debug mode
 """)
 
 def parse_number(v):
+    """Interpret VAL (either integer or string) as unsigned short.  Both
+    decimal and hexadecimal values are recognized.  If the argument cannot be
+    recognized, return None."""
     if type(v) == int:
         return int(v) & 0xffff
     elif type(v) == str:
         if re.search(r'^[-+]?\d+$', v):
             return int(v) & 0xffff
         else:
+            # hexadecimal number must have four digits (CASL II specification)
             m = re.search(r'^#([\dA-F]{4})$', v)
             if m:
                 # convert hex to decimal
@@ -96,23 +100,28 @@ def parse_number(v):
 class Instruction:
     def __init__(self, op, opr, err_func=die):
         self.op = op
-        self._opr = opr  # save raw operands
+        self._opr = opr  # raw operands
         self.err_func = err_func
 
+        # split and extract (at most three) operands
         if opr is None:
             oprs = []
         else:
             oprs = re.split(r'[,\s]+', opr)
-        self.noprs = len(oprs)
+        self.noprs = len(oprs)	# the number of valid operands
         self.opr1 = oprs[0] if self.noprs >= 1 else None
         self.opr2 = oprs[1] if self.noprs >= 2 else None
         self.opr3 = oprs[2] if self.noprs >= 3 else None
-        self.parse_op()
+        self.parse_inst()	# interpret the instruction
 
     def __repr__(self):
         return f'Instruction(op={self.op}, opr={self._opr}, noprs={self.noprs}, categ={self.categ})'
 
     def guess_type(self):
+        """Return a list of strings, representing possible instruction types.
+        Instruction types are one of 'nopr', 'r', 'adr_x', 'r1_r2', and
+        'r_adr_x'.  See the varible INSTTBL for the description of instruction
+        types."""
         if self.noprs == 0:
             return ['nopr']
         elif self.noprs == 1:
@@ -125,7 +134,10 @@ class Instruction:
         else:
             return ['r_adr_x']
 
-    def parse_op(self):
+    def parse_inst(self):
+        """Decode the instruction and update object attributes CATEG
+        (instruction type) and CODE (op code)."""
+        # assembler instructions and macros
         if self.op in [
                 'START', 'END', 'DS', 'DC', 'RPUSH', 'RPOP', 'IN', 'OUT'
         ]:
@@ -136,7 +148,10 @@ class Instruction:
             categ, mnemonic = val
             if self.op != mnemonic:
                 continue
+            # if the nemonic matches, find the op code from the number/type 
+            # of operands
             for c in categs:
+                # FIXME: first match may fail if instructions have ambiguity
                 if categ == c:
                     self.categ = categ
                     self.code = code
@@ -147,16 +162,17 @@ class Instruction:
 class LabelTable:
     def __init__(self, debug_func=warn, err_func=die, assembler=None):
         self.tbl = {}
-        self.src = {}
+        self.src = {}	# for recording source lines
         self.debug_func = debug_func
         self.err_func = err_func
         self.assembler = assembler
 
     def __repr__(self):
-        return 'LabelTable()'
+        return 'LabelTable'
 
     def __setitem__(self, label, val):
         self.tbl[label] = val
+        # record the line at which the label is defined
         self.src[label] = self.assembler.file, self.assembler.lineno
 
     def __getitem__(self, label):
@@ -165,55 +181,59 @@ class LabelTable:
     def keys(self):
         return self.tbl.keys()
 
-    def src_for(self, addr):
-        return self.src[addr]
+    def src_for(self, label):
+        """Return the source code where label LABEL is defined."""
+        return self.src[label]
 
     def check_label(self, label):
         """Check the validity of label LABEL.  If not valid, display error and
-        exit."""
-        self.debug_func(f'check_label({self}, {label})')
-        if not re.search(r'^([A-Z][0-9A-Za-z]{0,5}|=[0-9A-F#-]+)$', label):
+        abort the program."""
+        self.debug_func(f'check_label(self={self}, label={label})')
+        # the maximum label length is 8 characters (CASL II specification)
+        if not re.search(r'^([A-Z][0-9A-Za-z]{0,7}|=[0-9A-F#+-]+)$', label):
             self.err_func(f"invalid label '{label}'")
 
     def register(self, label, val):
-        """Register a label LABEL in the label table with the value
-        VAL.  If LABEL is already defined, display error and exit."""
-        self.debug_func(f'register({self}, {label}, {val})')
+        """Register label LABEL in the label table with value VAL.  If LABEL
+        is already defined, display error and abort the program."""
+        self.debug_func(f'register(self={self}, label={label}, val={val})')
         self.check_label(label)
         if label in self.tbl:
             self.err_func(f"label '{label}' already defined")
-        self[label] = val
+        self[label] = val	# FIXME: force to unsigned short?
 
     def expand(self, val):
-        """Expand VAL to the corresponding decimal number.  Any label is
-        resolved and hexadecimal number is converted to decimal."""
-        self.debug_func(f'expand({self}, {val})')
+        """Expand VAL to the corresponding unsigned short.  VAL can be
+        integer, label, and hexadecimal number."""
+        self.debug_func(f'expand(self={self}, val={val})')
         if type(val) == str:
             if val in self.tbl:
                 val = self[val]
         v = parse_number(val)
         if v is None:
-            self.err_func(f"undefined label '{val}'")
+            self.err_func(f"invalid label or numeric value '{val}'")
         return v
 
 # ----------------------------------------------------------------
 class Memory:
     def __init__(self, debug_func=warn, err_func=die, assembler=None):
         self.memory = []
-        self.src = []
+        self.src = []	# for recording source lines
         self.debug_func = debug_func
         self.err_func = err_func
         self.assembler = assembler
 
     def __repr__(self):
-        return 'Memory()'
+        return 'Memory'
 
     def __setitem__(self, addr, val):
+        # automatically exapnd the list size if necessary
         size = len(self.memory)
         if size < addr + 1:
             self.memory.extend([None] * (addr + 1 - size))
         self.memory[addr] = val
 
+        # record the source line where the word is generated
         size = len(self.src)
         if size < addr + 1:
             self.src.extend([None] * (addr + 1 - size))
@@ -226,10 +246,12 @@ class Memory:
     def src_at(self, addr):
         return self.src[addr]
 
-    def _register_number(self, reg):
-        """Check the validity of register REG.  Return the register
-        number (0 - 4). If not valid, display error and exit."""
-        self.debug_func(f'_register_number({self}, {reg})')
+    def register_number(self, reg):
+        """Return the general register number (i.e., 0--7) from string
+        representation of register REG.  If REG is None, return 0, which
+        corresponds to GR0.  If REG is invalid, display error and abort the
+        program."""
+        self.debug_func(f'register_number(self={self}, reg={reg})')
         if reg is None:
             return 0
         m = re.search(r'^GR([0-7])$', reg)
@@ -238,15 +260,21 @@ class Memory:
         return int(m.group(1))
 
     def generate_code(self, addr, inst, gr, adr, xr, single_word=False):
-        """Generate two-word code from INST, GR, ADR, and XR at ADDRESS."""
+        """Generate instruction code from address ADDR.  The instruction is
+        specified by INST (op code), GR (GR register or R1), ADR (address),
+        and XR (index register or R2).  If SINGLE_WORD is True, generate a
+        single word.  Otherwise, generate two words."""
         self.debug_func(
-            f'generate_code({self}, {addr:04x}, inst={inst:02x}, gr={gr}, adr={adr}, xr={xr})'
+            f'generate_code(self={self}, addr={addr:04x}, inst={inst:02x}, gr={gr}, adr={adr}, xr={xr})'
         )
-        gr = self._register_number(gr)
-        xr = self._register_number(xr)
+        # the first word is composed of op code (8 bits), GR/R1 register 
+        # (4 bits), and XR/R2 register (4 bits)
+        gr = self.register_number(gr)
+        xr = self.register_number(xr)
         val = (inst << 8) + (gr << 4) + xr
         self[addr] = val
         if not single_word:
+            # the second word is the address
             self[addr + 1] = adr
 
 # ----------------------------------------------------------------
@@ -260,13 +288,12 @@ class Assembler:
                                    err_func=self.error,
                                    assembler=self)
         self.literals = {}
-
         self.start_addr = 0
         self.lineno = None
         self.line = None
 
     def __repr__(self):
-        return f'Assembler(start={self.start_addr}, addr={self.addr})'
+        return f'Assembler(start=#{self.start_addr:04x}, addr=#{self.addr:04x})'
 
     def copyright(self):
         return """\
@@ -275,10 +302,12 @@ Copyright (c) 2021, Hiroyuki Ohsaki.
 All rights reserved."""
 
     def load(self, file):
+        """Simply load the source file FILE into the buffer.  This method does
+        not perfom any assembly."""
         with open(file) as f:
             self.file = file
             for lineno, line in enumerate(f):
-                line = line.rstrip()
+                line = line.rstrip()	# remove the trailing CR+LF
                 self.buf.append(line)
 
     def debug(self, msg):
@@ -288,30 +317,25 @@ All rights reserved."""
     def error(self, msg):
         die(f'{self.file}:{self.lineno}: {msg}\n->{self.line}')
 
-    def check_decimal(self, number):
-        """Check the validity of decimal number NUMBER.  If not valid, display
-        error and exit."""
-        self.debug(f'check_decimal({number})')
-        if not re.search(r'^[+-]?\d+$', number):
-            self.error(f"'{number}' must be decimal")
-        return int(number)
-
-    def _remove_comment(self, line):
-        # remove comment --- take care of ``;'' between single quotes.
-        m = re.search(r"(^[^;]*'[^']*'.*?);.*$", line)
+    def remove_comment(self, line):
+        """Remove comment from the line LINE."""
+        # regexp for splitting non-comment and comment parts
+        # line format (CASL II specification):
+        # - comment starts with semicolon ';'
+        # - semicolon may appear in strings (e.g., DC assembler instruction)
+        m = re.search(r"^([^';]*('[^']*'[^';]*)*)\s*;.*$", line)
         if m:
-            line = m.group(1)
-        line = re.sub(r';.*$', '', line)
-        # remove trailing spaces
-        line = re.sub(r'\s+$', '', line)
+            line = m.groups(1)
         return line
 
-    def _parse_line(self, line):
-        # extract fields
+    def parse_line(self, line):
+        """Parse line LINE and extract the label (if specified) and the
+        instruction.  Return None if label/instruction is not present.  The
+        instruction is an instance of the Instruction class."""
         m = re.search(r'^(\S+)?\s+([A-Z]+)(\s+(.*)?)?$', line)
         if m:
             label, op, opr = m.group(1), m.group(2), m.group(4)
-            self.debug(f'label/op/opr = {label}/{op}/{opr}')
+            self.debug(f'parse_line: label={label}, op={op}, opr={opr}')
         else:
             self.error(f'syntax error {line}')
         if op:
@@ -320,6 +344,9 @@ All rights reserved."""
             return label, None
 
     def generate_r_adr_x(self, label, inst):
+        """Generate two-words instruction for instruction INST at the current
+        address.  The instruction takes at most three operands: GR, ADDRESS,
+        and XR."""
         if not (2 <= inst.noprs <= 3):
             self.error(f"missing operands '{inst}'")
         self.memory.generate_code(self.addr, inst.code, inst.opr1, inst.opr2,
@@ -327,6 +354,8 @@ All rights reserved."""
         self.addr += 2
 
     def generate_r1_r2(self, label, inst):
+        """Generate two-words instruction for instruction INST at the current
+        address.  The instruction takes two operands: R1 and R2."""
         if not (inst.noprs == 2):
             self.error(f"missing operands '{inst}'")
         self.memory.generate_code(self.addr,
@@ -338,6 +367,9 @@ All rights reserved."""
         self.addr += 1
 
     def generate_adr_x(self, label, inst):
+        """Generate two-words instruction for instruction INST at the current
+        address.  The instruction takes at most two operands: ADDRESS and
+        XR."""
         if not (1 <= inst.noprs <= 2):
             self.error(f"too much/too many operand '{inst}'")
         self.memory.generate_code(self.addr, inst.code, None, inst.opr1,
@@ -345,6 +377,8 @@ All rights reserved."""
         self.addr += 2
 
     def generate_r(self, label, inst):
+        """Generate one-word instruction for instruction INST at the current
+        address.  The instruction takes a single operand: R."""
         if inst.noprs != 1:
             self.error(f"expects just one operand '{inst}'")
         self.memory.generate_code(self.addr,
@@ -356,6 +390,8 @@ All rights reserved."""
         self.addr += 1
 
     def generate_nopr(self, label, inst):
+        """Generate one-word instruction for instruction INST at the current
+        address.  The instruction takes no operand."""
         if inst.noprs > 0:
             self.error(f'invalid operand "{inst}"')
         self.memory.generate_code(self.addr,
@@ -367,16 +403,19 @@ All rights reserved."""
         self.addr += 1
 
     def generate_start(self, label, inst):
+        """Handler for START assembler instruction.  START assembler
+        instruction specifies the start address of the program."""
         self.debug(f'generate_start({self}, {label}, {inst})')
         if not label:
             self.error("no label found at START")
         if inst.opr1 is not None:
-            # FIXME: CASL II specification only allows labels, not numbers
+            # FIXME: argument must be laben, not numbers (CASL II specification)
             self.start_addr = parse_number(inst.opr1)
             self.addr = self.start_addr
         self.in_block = True
 
     def generate_end(self, label, inst):
+        """Handler for END assembler instruction."""
         if label:
             self.error("can't use label '{label}' at END")
         if inst.noprs > 0:
@@ -384,9 +423,14 @@ All rights reserved."""
         self.in_block = False
 
     def generate_ds(self, label, inst):
+        """Handler for DS assembler instruction.  DS assembler instruction
+        allocates a memory block of the specified size."""
         if inst.noprs != 1:
-            self.error(f"DS exepects a single operand '{inst}'")
-        v = self.check_decimal(inst.opr1)
+            self.error(f"DS exepects a single argument '{inst}'")
+        # FIXME: DS accepts only decimal argument (CASL II specification)
+        v = parse_number(inst.opr1)
+        if v is None:
+            self.error(f"DS exepects a single numeric argument '{inst}'")            
         for n in range(v):
             self.memory[self.addr] = 0
             self.addr += 1
@@ -411,7 +455,7 @@ All rights reserved."""
         # parse DC arguments with regexp
         # this regexp matches either string or numeric argument with its (optional)
         # following comma separator
-        # CASL II DC assembler instruction specification:
+        # DC assembler instruction arguments (CASL II specification):
         # - arguments are separated by comma (,) with optional surrounding spaces
         # - string is quoted by single quote (')
         # - quote char in string is escaped by double quotes ('')
@@ -445,7 +489,7 @@ All rights reserved."""
         PUSH	0, GR7"""
         for line in code.splitlines():
             line = line.rstrip()
-            label, inst = self._parse_line(line)
+            label, inst = self.parse_line(line)
             self.generate(label, inst)
 
     def generate_rpop(self, label, inst):
@@ -514,10 +558,10 @@ All rights reserved."""
         self.debug(f'generate_lines({self}, {lines})')
         for line in lines:
             self.debug(line)
-            line = self._remove_comment(line)
+            line = self.remove_comment(line)
             if line == '':
                 continue
-            label, inst = self._parse_line(line)
+            label, inst = self.parse_line(line)
 
             # register label to the symbol table
             if label is not None:
