@@ -494,8 +494,34 @@ All rights reserved.""")
         self.state.pr = self.memory[self.state.sp]
         self.state.sp += 1
 
+    def exec_NOP_adr_x(self, inst, gr, adr, xr, eadr):
+        # just waste CPU cyles
+        self.state.sp += 1
+
     def exec_SVC_adr_x(self, inst, gr, adr, xr, eadr):
-        raise NotImplementedError
+        if eadr == 1:	# IN system call
+            ibuf = self.state.gr[1]
+            len_ = self.state.gr[2]
+            line = input('IN> ')  # prompt for input
+            line = line[:256]  # must be shorter than 256 characters
+            self.memory[len_] = len(line)
+            for c in line:
+                # higher bits are filled with 0s
+                self.memory[ibuf] = ord(c) & 0xff	
+                ibuf += 1
+        elif eadr == 2:	# OUT system call
+            obuf = self.state.gr[1]
+            len_ = self.state.gr[2]
+            nchars = self.memory[len_]
+            print('OUT> ', end='')
+            for n in range(nchars):
+                # higher bits are ignored by OS
+                c = self.memory[obuf] & 0xff
+                obuf += 1
+                print(chr(c), end='')
+            print()
+        # GR and FR are indefinite according to the COMET II specification
+        self.state.pr += 1
 
     def exec(self):
         """Execute one instruction from the PC --- evaluate the intruction,
