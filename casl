@@ -630,8 +630,10 @@ All rights reserved."""
             print(f'\t{file}:{lineno}:\t{val:04x}\t{label}')
 
 def main():
+    # parse command-line options
     opt = getopts('avd') or usage()
     asm = Assembler(debug=opt.d)
+    # process all specified files
     for file in sys.argv[1:]:
         asm.load(file)
         asm.pass1()
