@@ -148,10 +148,11 @@ class Comet:
         self._debug = debug
 
     def __repr__(self):
-        st = self.state
-        regs = ' '.join([f'#{st.gr[n]:02x}' for n in range(8)])
-        of, sf, zf = self.state.of, self.state.sf, self.state.zf
-        return f'Comet(#{st.pr:04x}, {regs} OF:{of} SF:{sf} ZF:{zf})'
+        # st = self.state
+        # regs = ' '.join([f'#{st.gr[n]:02x}' for n in range(8)])
+        # of, sf, zf = self.state.of, self.state.sf, self.state.zf
+        # return f'Comet(#{st.pr:04x}, {regs} OF:{of} SF:{sf} ZF:{zf})'
+        return f'#{self.state.pr:04x}'
 
     def debug(self, msg):
         if self._debug:
@@ -164,6 +165,7 @@ Copyright (c) 2021, Hiroyuki Ohsaki.
 All rights reserved.""")
 
     def load(self, file):
+        self.debug(f'load(self={self}, file={file})')
         try:
             with open(file, 'rb') as f:
                 print(f'Reading object from {file}...', end='')
@@ -189,7 +191,7 @@ All rights reserved.""")
             warn(f"opening '{file}' failed")
 
     def decode(self, addr=None):
-        self.debug(f'decode({self}, {addr})')
+        self.debug(f'decode(self={self}, addr={addr})')
         if addr is None:
             addr = self.state.pr
         word = self.memory[addr]
@@ -202,7 +204,7 @@ All rights reserved.""")
     def parse(self, addr=None):
         """ Disassemble the object from the PC, and return strings for the
         instruction and the operand.???"""
-        self.debug(f'parse({self}, {addr})')
+        self.debug(f'parse(comet={self}, addr={addr})')
         if addr is None:
             addr = self.state.pr
 
@@ -239,7 +241,7 @@ All rights reserved.""")
         return categ, nemonic, opr, size
 
     def update_fr(self, gr=None, val=None, of=None):
-        self.debug(f'update_fr({self}, {val}, {of})')
+        self.debug(f'update_fr(self={self}, val={val}, of={of})')
         if val is None:
             val = self.state.gr[gr]
         if val & 0x8000:
@@ -499,17 +501,22 @@ All rights reserved.""")
         self.state.sp += 1
 
     def exec_SVC_adr_x(self, inst, gr, adr, xr, eadr):
-        if eadr == 1:	# IN system call
+        if eadr == 1:  # IN system call
             ibuf = self.state.gr[1]
             len_ = self.state.gr[2]
-            line = input('IN> ')  # prompt for input
-            line = line[:256]  # must be shorter than 256 characters
-            self.memory[len_] = len(line)
-            for c in line:
-                # higher bits are filled with 0s
-                self.memory[ibuf] = ord(c) & 0xff	
-                ibuf += 1
-        elif eadr == 2:	# OUT system call
+            try:
+                line = input('IN> ')  # prompt for input
+                line = line[:256]  # must be shorter than 256 characters
+                self.memory[len_] = len(line)
+                for c in line:
+                    # higher bits are filled with 0s
+                    self.memory[ibuf] = ord(c) & 0xff
+                    ibuf += 1
+            except EOFError:
+                # stores -1 at ILEN if EOF
+                self.memory[len_] = unsigned(-1)
+
+        elif eadr == 2:  # OUT system call
             obuf = self.state.gr[1]
             len_ = self.state.gr[2]
             nchars = self.memory[len_]
@@ -520,13 +527,14 @@ All rights reserved.""")
                 obuf += 1
                 print(chr(c), end='')
             print()
+
         # GR and FR are indefinite according to the COMET II specification
         self.state.pr += 1
 
     def exec(self):
         """Execute one instruction from the PC --- evaluate the intruction,
         update registers, and advance the PC by the instruction's size."""
-        self.debug(f'exec({self})')
+        self.debug(f'exec(self={self})')
         # calcurate the effective address
         word, inst, gr, adr, xr = self.decode(self.state.pr)
         eadr = adr
@@ -543,7 +551,7 @@ All rights reserved.""")
             die(f'#{self.state.pr:04x}: {nemonic}_{categ} (#{inst:02x}) not implemented '
                 )
         self.debug(
-            f'exec_{nemonic}_{categ}(#{inst:02x}, {gr}, #{adr:04x}, {xr}, #{eadr:04x})'
+            f'exec_{nemonic}_{categ}(inst=#{inst:02x}, gr={gr}, adr=#{adr:04x}, xr={xr}, eadr=#{eadr:04x})'
         )
         subr(self, inst, gr, adr, xr, eadr)
 
@@ -609,7 +617,7 @@ All rights reserved.""")
         of, sf, zf = self.state.of, self.state.sf, self.state.zf
         print(
             ""
-            f"PR  #{pr:04x} [ {inst:4} {opr:18} ] SP  #{sp:04x}\t\tOF:{of} / SF:{sf} / ZF:{zf}\n"
+            f"PR  #{pr:04x} [{inst:4} {opr:15}]      SP  #{sp:04x}\t\tOF {of}   SF {sf}   ZF {zf}\n"
             f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
             f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
             f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) "
