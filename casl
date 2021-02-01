@@ -437,6 +437,7 @@ All rights reserved."""
         # - string is quoted by single quote (')
         # - quote char in string is escaped by double quotes ('')
         # - string may contain commad
+        # e.g., DC 123, #12F0, 'ABC', ''' = quote', -123, '# = sharp'
         for m in re.finditer(r"\s*('[^']*(''[^']*)*'|[^',]+)(\s*,\s*)?",
                              inst._opr):
             opr = m.group(1)
@@ -456,8 +457,8 @@ All rights reserved."""
                     self.error(f"invalid numeric argument for DC '{opr}'")
 
     def generate_rpush(self, label, inst):
-        """Expand RPUSH macro and generate code for pushing registers GR1
-        through GR7."""
+        """Expand RPUSH macro and generate code for storing registers GR1
+        through GR7 on the stack."""
         code = """\
         PUSH	0, GR1
         PUSH	0, GR2
@@ -469,8 +470,8 @@ All rights reserved."""
         self.generate_lines(code.splitlines())
 
     def generate_rpop(self, label, inst):
-        """Expand RPOP macro and generate code for popping registers GR7
-        through GR1."""
+        """Expand RPOP macro and generate code for retrieving registers GR7
+        through GR1 from the stack."""
         code = """\
 	POP	GR7
 	POP	GR6
@@ -519,10 +520,11 @@ All rights reserved."""
         # line format (CASL II specification):
         # - comment starts with semicolon ';'
         # - semicolon may appear in strings (e.g., DC assembler instruction)
+        # e.g., MSG  DC 'string may contain ; (semicolon)', 123 ; comment on the right
         m = re.search(r"^([^';]*('[^']*'[^';]*)*)\s*;.*$", line)
         if m:
             line = m.group(1)
-        return line
+        return line.rstrip()
 
     def generate(self, label, inst):
         """Generate code at the current address for the instruction INST."""
@@ -557,7 +559,7 @@ All rights reserved."""
             # register label to the symbol table
             if label is not None:
                 self.labeltbl.register(label, self.addr)
-            # generate object code according the type of instruction
+            # generate object code according to the instruction
             if inst:
                 self.generate(label, inst)
                 # register all literals
@@ -584,9 +586,10 @@ All rights reserved."""
         self.addr = 0
         self.in_block = False
         for self.lineno, self.line in enumerate(self.buf):
+            # invoke for every line to locate the source code
             self.generate_lines([self.line])
         if self.in_block:
-            self.error("No 'END' instruction found")
+            self.error("no 'END' instruction found")
         self.generate_literals()
 
     def pass2(self):
