@@ -26,7 +26,7 @@ import readline
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.4
+VERSION = 0.5
 
 # maximum/minimum of signed value
 MAX_SIGNED = 32767
