@@ -1,0 +1,6 @@
+ADDL	START
+	LAD	GR0, 65530	; ? GR0==0xfffa
+	ADDL	GR0, ONE	; ? GR0==0xfffb OF==0 SF==1
+	RET
+ONE	DC	1	
+	END

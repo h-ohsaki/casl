@@ -1,0 +1,9 @@
+LAD	START
+	LD	GR1, ONE	; ? GR1==1
+	LAD	GR2, 7		; ? GR2==7
+	LAD	GR3, 7, GR1	; ? GR3==7+GR1
+	LAD	GR4, -7, GR1	; ? GR4==0x10000-7+GR1
+	RET
+ONE	DC	1	
+NEG	DC	-2
+	END

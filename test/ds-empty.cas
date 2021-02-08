@@ -1,0 +1,5 @@
+DS	START
+	LD	GR1, V1
+	RET
+V1	DS	0
+	END

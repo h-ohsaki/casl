@@ -1,0 +1,5 @@
+OFFSET	START	#0008
+	NOP		; ? (0x0008)==0 (0x000a)==123
+	RET
+	DC	123
+	END

@@ -1,0 +1,12 @@
+ADD	START
+	LAD	GR0, 5		; ? GR0==5
+	LAD	GR1, -1		; ? GR1==0x10000-1
+	ADDA	GR0, GR1	; ? GR0==4 OF==0 ZF==0 SF==0
+
+	LAD	GR0, 5		; ? GR0==5
+	LAD	GR1, -1		; ? GR1==0x10000-1
+	ADDL	GR0, GR1	; ? GR0==4 OF==1 ZF==0 SF==0
+
+	RET
+	END
+	

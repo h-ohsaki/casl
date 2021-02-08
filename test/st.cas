@@ -1,0 +1,10 @@
+LD	START
+	LD	GR0, V1		; ? GR0==123 ZF==0 SF==0
+	ST	GR0, V2		; ? (0x000a)==123 ZF==0 SF==0
+	LD	GR3, ONE	; ? GR3==1 ZF==0 SF==0
+	ST	GR0, V2, GR3	; ? (0x000b)==123 ZF==0 SF==0
+	RET
+V1	DC	123
+V2	DC	456
+ONE	DC	1
+	END

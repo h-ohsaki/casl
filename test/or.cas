@@ -1,0 +1,15 @@
+OR	START
+	LAD	GR1, #F0F0	; ? GR1==0xf0f0
+	LAD	GR2, #0F0F	; ? GR2==0x0f0f
+	OR	GR1, GR2	; ? GR1==0xffff ZF==0 SF==1 OF==0
+
+	LAD	GR1, #F0F0	; ? GR1==0xf0f0
+	OR	GR1, V1		; ? GR1==0xffff ZF==0 SF==1 OF==0
+
+	LAD	GR1, #F0F0	; ? GR1==0xf0f0
+	OR	GR1, V2		; ? GR1==0xfff0 ZF==0 SF==1 OF==0
+
+	RET
+V1	DC	#0F0F
+V2	DC	#0F00
+	END

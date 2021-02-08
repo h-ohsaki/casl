@@ -1,0 +1,15 @@
+INC	START
+
+	LAD	GR1, #FFFF	; ? GR1==0x10000-1
+	ADDA	GR1, ONE	; ? GR1==0 ZF==1 OF==0
+
+	LAD	GR1, #FFFF	; ? GR1==0x10000-1
+	ADDL	GR1, ONE	; ? GR1==0 ZF==1 OF==1
+
+	LAD	GR1, #FFFF	; ? GR1==0x10000-1
+		     		; LAD does not change flags
+	LAD	GR1, 1, GR1	; ? GR1==0 ZF==1 OF==1 
+
+	RET
+ONE	DC	1
+	END

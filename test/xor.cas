@@ -1,0 +1,15 @@
+XOR	START
+	LAD	GR1, #F0F0	; ? GR1==0xf0f0
+	LAD	GR2, #FFFF	; ? GR2==0xffff
+	XOR	GR1, GR2	; ? GR1==0x0f0f ZF==0 SF==0 OF==0
+
+	LAD	GR1, #F0F0	; ? GR1==0xf0f0
+	XOR	GR1, V1		; ? GR1==0xe2c4 ZF==0 SF==1 OF==0
+
+	LAD	GR1, #F0F0	; ? GR1==0xf0f0
+	XOR	GR1, V2		; ? GR1==0x0000 ZF==1 SF==0 OF==0
+
+	RET
+V1	DC	#1234
+V2	DC	#F0F0
+	END

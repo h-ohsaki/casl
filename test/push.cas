@@ -1,0 +1,11 @@
+PUSH	START
+				; LAD, PUSH, POP do not update flags
+	LD	GR1, ZERO	; ? GR1==0 ZF==1 SF==0
+	LAD	GR7, -1		; ? GR7==0x10000-1 ZF==1 SF==0
+	PUSH	0, GR7		; ? (SP)==0x10000-1 ZF==1 SF==0
+	LAD	GR7, 0		; ? GR7==0 ZF==1 SF==0
+	POP	GR7		; ? GR7==0x10000-1 ZF==1 SF==0
+	RET
+ZERO	DC	0
+	END
+	

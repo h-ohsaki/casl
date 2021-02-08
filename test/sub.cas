@@ -1,0 +1,11 @@
+SUB	START
+
+	LAD	GR1, 5		; ? GR1==5
+	SUBA	GR1, TEN	; ? GR1==0x10000-5 OF==0 ZF==0 SF==1
+
+	LAD	GR1, 5		; ? GR1==5
+	SUBL	GR1, TEN	; ? GR1==0x10000-5 OF==1 ZF==0 SF==1
+
+	RET
+TEN	DC	10
+	END

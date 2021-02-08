@@ -1,0 +1,20 @@
+RPUSH	START
+
+	LAD	GR1, 1	; ? GR1==1
+	LAD	GR2, 2
+	LAD	GR3, 3
+	LAD	GR4, 4	; ? GR4==4
+	LAD	GR5, 5
+	LAD	GR6, 6
+	LAD	GR7, 7	; ? GR7==7
+	RPUSH
+	LAD	GR1, 0	; ? (SP)==7 (SP+1)==6 GR1==0
+	LAD	GR2, 0
+	LAD	GR3, 0
+	LAD	GR4, 0	; ? GR4==0
+	LAD	GR5, 0
+	LAD	GR6, 0
+	LAD	GR7, 0	; ? GR7==0
+	RPOP	     	
+	RET		; ? GR1==1 GR4==4 GR7==7
+	END
