@@ -612,7 +612,7 @@ All rights reserved."""
         """Dump the assembled object code to the standard output with
         corresponding source lines."""
         self.debug(f'dump_memory(self={self})')
-        print('CASL LISTING')
+        print(f'CASL LISTING {self.file}')
         last_lineno = None
         for addr in range(self.start_addr, self.addr):
             val = self.memory[addr]
@@ -632,7 +632,7 @@ All rights reserved."""
         for label in self.labeltbl.keys():
             file, lineno = self.labeltbl.src_for(label)
             val = self.labeltbl[label]
-            print(f'\t{file}:{lineno}:\t{val:04x}\t{label}')
+            print(f'               {file}:{lineno}\t{val:04x} {label}')
 
 def main():
     # parse command-line options
