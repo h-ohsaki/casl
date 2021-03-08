@@ -649,3 +649,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# DC label
+# const & 0xffff (negative number)
+# START label
+# hex 4 digits
