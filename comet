@@ -26,7 +26,7 @@ import readline
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.5
+VERSION = 0.6
 
 # maximum/minimum of signed value
 MAX_SIGNED = 32767
@@ -176,10 +176,11 @@ All rights reserved.""")
                 header = f.read(16)
                 if header[:4] != b'CASL':
                     die(f'{file}: not a COMET object file')
-                self.state.pr = struct.unpack('>H', header[4:6])[0]
+                start_addr = struct.unpack('>H', header[4:6])[0]
+                self.state.pr = start_addr
 
                 # load object into the memory
-                addr = 0
+                addr = start_addr
                 while True:
                     buf = f.read(2)
                     if not buf:
@@ -409,12 +410,14 @@ All rights reserved.""")
 
     def exec_CPL_r_adr_x(self, inst, gr, adr, xr, eadr):
         v = self.state.gr[gr] - self.memory[eadr]
-        self.update_fr(unsigned(v))
+        v = max(MIN_SIGNED, min(MAX_SIGNED, v))
+        self.update_fr(val=v)
         self.state.pr += 2
 
     def exec_CPL_r1_r2(self, inst, r1, adr, r2, eadr):
         v = self.state.gr[r1] - self.state.gr[r2]
-        self.update_fr(val=unsigned(v))
+        v = max(MIN_SIGNED, min(MAX_SIGNED, v))
+        self.update_fr(val=v)
         self.state.pr += 1
 
     def exec_SLA_r_adr_x(self, inst, gr, adr, xr, eadr):
