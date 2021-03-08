@@ -25,7 +25,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.5
+VERSION = 0.6
 
 # COMET II instructions: the key for each entry is op code, and its corresponding
 # value is a tuple of the instruction type and the mnemonic.
@@ -296,7 +296,7 @@ class Assembler:
         self.line = None
 
     def __repr__(self):
-        return f'Assembler(start=#{self.start_addr:04x}, addr=#{self.addr:04x})'
+        return f'Assembler(start=#{self.start_addr}, addr=#{self.addr:04x})'
 
     def copyright(self):
         return """\
@@ -401,8 +401,7 @@ All rights reserved."""
             self.error("no label found at START")
         if inst.opr1 is not None:
             # FIXME: argument must be laben, not numbers (CASL II specification)
-            self.start_addr = parse_number(inst.opr1)
-            self.addr = self.start_addr
+            self.start_addr = inst.opr1
         self.in_block = True
 
     def generate_end(self, label, inst):
@@ -599,9 +598,10 @@ All rights reserved."""
         outfile = base + '.com'
         with open(outfile, 'wb') as f:
             # print object header
-            f.write(struct.pack('>4sH10x', b'CASL', self.start_addr))
+            addr = self.labeltbl.expand(self.start_addr)
+            f.write(struct.pack('>4sH10x', b'CASL', addr))
             # dump memory image
-            for addr in range(self.start_addr, self.addr):
+            for addr in range(self.addr):
                 val = self.memory[addr]
                 # FIXME: undefined labels must be regarded as start addresses
                 # of other programs (CASL II specification)
@@ -614,7 +614,7 @@ All rights reserved."""
         self.debug(f'dump_memory(self={self})')
         print(f'CASL LISTING {self.file}')
         last_lineno = None
-        for addr in range(self.start_addr, self.addr):
+        for addr in range(self.addr):
             val = self.memory[addr]
             v = self.labeltbl.expand(val)
             file, lineno, line = self.memory.src_at(addr)
