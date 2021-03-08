@@ -400,7 +400,7 @@ All rights reserved."""
         if not label:
             self.error("no label found at START")
         if inst.opr1 is not None:
-            # FIXME: argument must be laben, not numbers (CASL II specification)
+            # FIXME: argument must be label, not numbers (CASL II specification)
             self.start_addr = inst.opr1
         self.in_block = True
 
@@ -428,15 +428,15 @@ All rights reserved."""
     def generate_dc(self, label, inst):
         """Handler for DC assembler instruction.  DC assembler instruction
         allocates a word with the specified value for every argument."""
-        # parse DC arguments with regexp
-        # this regexp matches either string or numeric argument with its (optional)
-        # following comma separator
+        # parse DC arguments with regexp:
+        # This regexp matches either string, numeric argument or label with 
+        # its (optional) following comma separator.
         # DC assembler instruction arguments (CASL II specification):
         # - arguments are separated by comma (,) with optional surrounding spaces
         # - string is quoted by single quote (')
         # - quote char in string is escaped by double quotes ('')
         # - string may contain commad
-        # e.g., DC 123, #12F0, 'ABC', ''' = quote', -123, '# = sharp'
+        # e.g., DC 123, #12F0, 'ABC', SYM, ''' = quote', -123, '# = sharp'
         for m in re.finditer(r"\s*('[^']*(''[^']*)*'|[^',]+)(\s*,\s*)?",
                              inst._opr):
             opr = m.group(1)
@@ -451,9 +451,9 @@ All rights reserved."""
                 val = parse_number(opr)
                 if val is not None:
                     self.memory[self.addr] = val
-                    self.addr += 1
                 else:
-                    self.error(f"invalid numeric argument for DC '{opr}'")
+                    self.memory[self.addr] = opr	# must be label
+                self.addr += 1
 
     def generate_rpush(self, label, inst):
         """Expand RPUSH macro and generate code for storing registers GR1
@@ -649,8 +649,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# DC label
-# const & 0xffff (negative number)
-# START label
-# hex 4 digits
