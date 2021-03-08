@@ -180,7 +180,7 @@ All rights reserved.""")
                 self.state.pr = start_addr
 
                 # load object into the memory
-                addr = start_addr
+                addr = 0
                 while True:
                     buf = f.read(2)
                     if not buf:
@@ -268,7 +268,7 @@ All rights reserved.""")
         else:
             self.state.zf = 0
         if of is not None:
-            self.state.of = of
+            self.state.of = 1 if of else 0
 
     def exec_LD_r_adr_x(self, inst, gr, adr, xr, eadr):
         self.state.gr[gr] = self.memory[eadr]
@@ -440,6 +440,7 @@ All rights reserved.""")
         else:		# non-negative
             last_evicted = (v >> (eadr - 1)) & 1
             v >>= eadr
+        self.state.gr[gr] = v
         self.update_fr(gr, of=last_evicted)
         self.state.pr += 2
 
@@ -447,6 +448,8 @@ All rights reserved.""")
         v = self.state.gr[gr]
         v <<= eadr
         last_evicted = v & 0x10000
+        v &= 0xffff
+        self.state.gr[gr] = v
         self.update_fr(gr, of=last_evicted)
         self.state.pr += 2
 
@@ -454,6 +457,7 @@ All rights reserved.""")
         v = self.state.gr[gr]
         last_evicted = (v >> (eadr - 1)) & 1
         v >>= eadr
+        self.state.gr[gr] = v
         self.update_fr(gr, of=last_evicted)
         self.state.pr += 2
 
