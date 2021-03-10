@@ -25,7 +25,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.8
+VERSION = 0.9
 
 # COMET II instructions: the key for each entry is op code, and its corresponding
 # value is a tuple of the instruction type and the mnemonic.
@@ -307,11 +307,14 @@ All rights reserved."""
     def load(self, file):
         """Simply load the source file FILE into the buffer.  This method does
         not perfom any assembly."""
-        with open(file) as f:
-            self.file = file
-            for lineno, line in enumerate(f):
-                line = line.rstrip()  # remove the trailing CR+LF
-                self.buf.append(line)
+        try:
+            with open(file) as f:
+                self.file = file
+                for lineno, line in enumerate(f):
+                    line = line.rstrip()  # remove the trailing CR+LF
+                    self.buf.append(line)
+        except FileNotFoundError:
+            die(f"Opening '{file}' failed")
 
     def debug(self, msg):
         if self.enable_debug:
@@ -432,7 +435,7 @@ All rights reserved."""
         """Handler for DC assembler instruction.  DC assembler instruction
         allocates a word with the specified value for every argument."""
         # parse DC arguments with regexp:
-        # This regexp matches either string, numeric argument or label with 
+        # This regexp matches either string, numeric argument or label with
         # its (optional) following comma separator.
         # DC assembler instruction arguments (CASL II specification):
         # - arguments are separated by comma (,) with optional surrounding spaces
@@ -455,7 +458,7 @@ All rights reserved."""
                 if val is not None:
                     self.memory[self.addr] = val
                 else:
-                    self.memory[self.addr] = opr	# must be label
+                    self.memory[self.addr] = opr  # must be label
                 self.addr += 1
 
     def generate_rpush(self, label, inst):
@@ -596,48 +599,37 @@ All rights reserved."""
         self.debug(f'pass2(self={self})')
         base = re.sub(r'\.cas', '', self.file, flags=re.I)
         outfile = base + '.com'
-        with open(outfile, 'wb') as f:
-            # print object header
-            addr = self.labeltbl.expand(self.start_addr)
-            f.write(struct.pack('>4sH10x', b'CASL', addr))
-            # dump memory image
-            for addr in range(self.addr):
-                val = self.memory[addr]
-                # FIXME: undefined labels must be regarded as start addresses
-                # of other programs (CASL II specification)
-                v = self.labeltbl.expand(val)
-                f.write(struct.pack('>H', v))
-        # export label table
-        symfile = base + '.clb'
-        with open(symfile, 'w') as f:
-            for label, val in self.labeltbl.items():
-                print(f'{label}\t{val:04x}', file=f)
-            
-    def dump_memory(self):
+        with open(outfile, 'w') as f:
+            print(f'COMET {self.start_addr:04x}', file=f)
+            self.dump_memory(f)
+            self.dump_labels(f)
+
+    def dump_memory(self, stream=sys.stdout):
         """Dump the assembled object code to the standard output with
         corresponding source lines."""
         self.debug(f'dump_memory(self={self})')
-        print(f'CASL LISTING {self.file}')
+        print(f'CASL LISTING {self.file}', file=stream)
         last_lineno = None
         for addr in range(self.addr):
             val = self.memory[addr]
             v = self.labeltbl.expand(val)
             file, lineno, line = self.memory.src_at(addr)
             if lineno != last_lineno:
-                print(f'{lineno:4} {addr:04x} {v:04x}\t', end='')
-                print(line)
+                print(f'{lineno:4} {addr:04x} {v:04x}\t', end='', file=stream)
+                print(line, file=stream)
                 last_lineno = lineno
             else:
-                print(f'{lineno:4}      {v:04x}')
+                print(f'{lineno:4}      {v:04x}', file=stream)
 
-    def dump_labels(self):
+    def dump_labels(self, stream=sys.stdout):
         """Dump all defined labels to the standard output."""
         self.debug(f'dump_label(self={self})')
-        print('\nDEFINED LABELS')
+        print('\nDEFINED LABELS', file=stream)
         for label in self.labeltbl.keys():
             file, lineno = self.labeltbl.src_for(label)
             val = self.labeltbl[label]
-            print(f'               {file}:{lineno}\t{val:04x} {label}')
+            print(f'               {file}:{lineno}\t{val:04x} {label}',
+                  file=stream)
 
 def main():
     # parse command-line options
