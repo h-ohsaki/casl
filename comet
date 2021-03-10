@@ -26,7 +26,7 @@ import readline
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.8
+VERSION = 0.9
 
 # maximum/minimum of signed value
 MAX_SIGNED = 32767
@@ -177,57 +177,65 @@ All rights reserved.""")
         else:
             return f'#{v:04x}'
 
-    def load_object(self):
+    def _add_word(self, addr, word_str):
+        if not word_str:
+            return
+        if addr >= 0x10000:
+            die('Out of memory')
+        v = int(word_str, 16)
+        self.memory[addr] = v
+        self.end_addr = addr
+        addr += 1
+        return addr
+
+    def _load_words(self, addr, line):
+        m = re.search(r'^\s*(\d+)\s*([\da-fA-F]+)\s+([\da-fA-F]+)?', line)
+        if m:
+            line, word1, word2 = m.groups()
+            addr = self._add_word(addr, word1)
+            addr = self._add_word(addr, word2)
+        return addr
+
+    def _load_label(self, line):
+        m = re.search(r'(\S+):(\d+)\s+([\da-fA-F]+)\s+(\S+)', line)
+        if m:
+            file, line, val, label = m.groups()
+            v = int(val, 16)
+            self.label[label] = v
+            self.label_for[v] = label
+        
+    def load(self, file):
         """Open COMET object file FILE and load the content of the file into
         the memory.  If the file is not a valid COMET object file, display
         error and abort the program."""
-        self.debug(f'load_object(self={self})')
+        self.debug(f'load(self={self}, file={file})')
         # FIXME: memory must be cleared
         try:
-            with open(self.file, 'rb') as f:
-                print(f'Reading object from {self.file}...', end='')
-
+            with open(file, 'r') as f:
+                print(f'Reading object from {file}...', end='')
                 # parse the file header
-                header = f.read(16)
-                if header[:4] != b'CASL':
-                    die(f'{self.file}: not a COMET object file')
-                self.start_addr = struct.unpack('>H', header[4:6])[0]
+                header = f.readline()
+                m = re.search(r'^COMETII\s+([\da-fA-F]+)', header)
+                if not m:
+                    die(f'{file}: not a COMET object file')
+                self.start_addr = int(m.group(1), 16)
 
                 # load object into the memory
                 addr = 0
-                while True:
-                    buf = f.read(2)
-                    if not buf:
-                        break
-                    if addr >= 0x10000:
-                        die('Out of memory')
-                    self.memory[addr] = struct.unpack('>H', buf)[0]
-                    self.end_addr = addr
-                    addr += 1
-                print('done.')
-        except FileNotFoundError:
-            warn(f"Opening '{self.file}' failed")
-
-    def load_label(self):
-        self.debug(f'load_label(self={self})')
-        file = re.sub(r'\.com$', '.clb', self.file)
-        try:
-            with open(file, 'r') as f:
-                print(f'Reading label(s) from {file}...', end='')
+                in_label = False
                 for line in f:
                     line = line.rstrip()
-                    label, val = line.split('\t')
-                    v = int(val, 16)
-                    self.label[label] = v
-                    self.label_for[v] = label
+                    if line.startswith('DEFINE LABELS'):
+                        in_label = True
+                    if not in_label:
+                        addr = self._load_words(addr, line)
+                    else:
+                        self._load_label(line)
                 print('done.')
         except FileNotFoundError:
-            pass
-        
-    def load(self, file):
+            warn(f"Opening '{file}' failed")
+
         self.file = file
-        self.load_object()
-        self.load_label()
         self.state.sp = 0xffff
         self.state.pr = self.start_addr
         
