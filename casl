@@ -25,7 +25,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.7
+VERSION = 0.8
 
 # COMET II instructions: the key for each entry is op code, and its corresponding
 # value is a tuple of the instruction type and the mnemonic.
@@ -341,6 +341,9 @@ All rights reserved."""
         and XR."""
         if not (2 <= inst.noprs <= 3):
             self.error(f"missing operands '{inst}'")
+        # GR0 cannot be used as an index register.
+        if inst.opr3 == 'GR0':
+            self.error("can't use GR0 as an index register")
         self.memory.generate_code(self.addr, inst.code, inst.opr1, inst.opr2,
                                   inst.opr3)
         self.addr += 2
@@ -531,9 +534,6 @@ All rights reserved."""
         # START must be the first instruction
         if not self.in_block and inst.categ != 'start':
             self.error(f"no START directive found")
-        # GR0 cannot be used as an index register.
-        if inst.opr2 == 'GR0':
-            self.error("can't use GR0 as an index register")
 
         subr = eval(f'Assembler.generate_{inst.categ}')
         if callable(subr):
