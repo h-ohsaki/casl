@@ -607,7 +607,12 @@ All rights reserved."""
                 # of other programs (CASL II specification)
                 v = self.labeltbl.expand(val)
                 f.write(struct.pack('>H', v))
-
+        # export label table
+        symfile = base + '.clb'
+        with open(symfile, 'w') as f:
+            for label, val in self.labeltbl.items():
+                print(f'{label}\t{val:04x}', file=f)
+            
     def dump_memory(self):
         """Dump the assembled object code to the standard output with
         corresponding source lines."""
