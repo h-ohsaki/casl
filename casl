@@ -25,7 +25,7 @@ import sys
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.6
+VERSION = 0.7
 
 # COMET II instructions: the key for each entry is op code, and its corresponding
 # value is a tuple of the instruction type and the mnemonic.
