@@ -19,7 +19,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import re
-import struct
 import sys
 import readline
 
@@ -177,33 +176,6 @@ All rights reserved.""")
         else:
             return f'#{v:04x}'
 
-    def _add_word(self, addr, word_str):
-        if not word_str:
-            return
-        if addr >= 0x10000:
-            die('Out of memory')
-        v = int(word_str, 16)
-        self.memory[addr] = v
-        self.end_addr = addr
-        addr += 1
-        return addr
-
-    def _load_words(self, addr, line):
-        m = re.search(r'^\s*(\d+)\s*([\da-fA-F]+)\s+([\da-fA-F]+)?', line)
-        if m:
-            line, word1, word2 = m.groups()
-            addr = self._add_word(addr, word1)
-            addr = self._add_word(addr, word2)
-        return addr
-
-    def _load_label(self, line):
-        m = re.search(r'(\S+):(\d+)\s+([\da-fA-F]+)\s+(\S+)', line)
-        if m:
-            file, line, val, label = m.groups()
-            v = int(val, 16)
-            self.label[label] = v
-            self.label_for[v] = label
-        
     def load(self, file):
         """Open COMET object file FILE and load the content of the file into
         the memory.  If the file is not a valid COMET object file, display
@@ -225,12 +197,28 @@ All rights reserved.""")
                 in_label = False
                 for line in f:
                     line = line.rstrip()
-                    if line.startswith('DEFINE LABELS'):
+                    if line.startswith('DEFINED LABELS'):
                         in_label = True
                     if not in_label:
-                        addr = self._load_words(addr, line)
+                        m = re.search(
+                            r'^\s*(\d+)\s*([\da-fA-F]+|    )\s+([\da-fA-F]+)',
+                            line)
+                        if m:
+                            line, addr_, word = m.groups()
+                            if addr >= 0x10000:
+                                die('Out of memory')
+                            v = int(word, 16)
+                            self.memory[addr] = v
+                            self.end_addr = addr
+                            addr += 1
                     else:
-                        self._load_label(line)
+                        m = re.search(r'(\S+):(\d+)\s+([\da-fA-F]+)\s+(\S+)',
+                                      line)
+                        if m:
+                            file, line, val, label = m.groups()
+                            v = int(val, 16)
+                            self.label[label] = v
+                            self.label_for[v] = label
                 print('done.')
         except FileNotFoundError:
             warn(f"Opening '{file}' failed")
@@ -238,7 +226,7 @@ All rights reserved.""")
         self.file = file
         self.state.sp = 0xffff
         self.state.pr = self.start_addr
-        
+
     def decode(self, addr=None):
         """Decode two words from the address ADDR, and return a tuple of
         the first word, op code, GR, address, and XR.  If ADDR is not
