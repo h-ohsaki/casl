@@ -91,6 +91,7 @@ CMDTBL = [
     (r'^p|print', 'cmd_print', False),
     (r'^q|quit', 'cmd_quit', False),
     (r'^r|run', 'cmd_run', True),
+    (r'^c|continue', 'cmd_continue', True),
     (r'^st|stack', 'cmd_stack', False),
     (r'^s|step', 'cmd_step', True),
 ]
@@ -125,7 +126,7 @@ def parse_number(v):
         if re.search(r'^[-+]?\d+$', v):
             return int(v) & 0xffff
         else:
-            # different from CASL II specification, this program accepts 
+            # different from CASL II specification, this program accepts
             # lowercase characters and non-4-digit numbers
             m = re.search(r'^#([\da-fA-F]+)$', v)
             if m:
@@ -148,6 +149,9 @@ class Comet:
         self.state = State()
         self.breakpoints = {}
         self._debug = debug
+        self.start_addr = None
+        self.end_addr = None
+        self.suspend = False
 
     def __repr__(self):
         return f'#{self.state.pr:04x}'
@@ -170,14 +174,13 @@ All rights reserved.""")
         # FIXME: memory must be cleared
         try:
             with open(file, 'rb') as f:
-                print(f'reading object from {file}...', end='')
+                print(f'Reading object from {file}...', end='')
 
                 # parse the file header
                 header = f.read(16)
                 if header[:4] != b'CASL':
                     die(f'{file}: not a COMET object file')
-                start_addr = struct.unpack('>H', header[4:6])[0]
-                self.state.pr = start_addr
+                self.start_addr = struct.unpack('>H', header[4:6])[0]
 
                 # load object into the memory
                 addr = 0
@@ -186,12 +189,16 @@ All rights reserved.""")
                     if not buf:
                         break
                     if addr >= 0x10000:
-                        die('out of memory')
+                        die('Out of memory')
                     self.memory[addr] = struct.unpack('>H', buf)[0]
+                    self.end_addr = addr
                     addr += 1
                 print('done.')
         except FileNotFoundError:
-            warn(f"opening '{file}' failed")
+            warn(f"Opening '{file}' failed")
+        self.file = file
+        self.state.sp = 0xffff
+        self.state.pr = self.start_addr
 
     def decode(self, addr=None):
         """Decode two words from the address ADDR, and return a tuple of
@@ -204,6 +211,7 @@ All rights reserved.""")
         inst = word >> 8
         gr = (word >> 4) & 0xf
         xr = word & 0xf
+
         adr = self.memory[addr + 1]
         self.debug(
             f'decode: #{word:04x}, inst=#{inst:02x}, gr=#{gr:02x}, adr=#{adr:04x}, xr=#{xr:02x}'
@@ -290,7 +298,7 @@ All rights reserved.""")
 
     def exec_ADDA_r_adr_x(self, inst, gr, adr, xr, eadr):
         v = signed(self.state.gr[gr]) + signed(self.memory[eadr])
-        if MIN_SIGNED <= v <= MAX_SIGNED:	# check overflow
+        if MIN_SIGNED <= v <= MAX_SIGNED:  # check overflow
             of = 0
         else:
             of = 1
@@ -300,7 +308,7 @@ All rights reserved.""")
 
     def exec_ADDA_r1_r2(self, inst, r1, adr, r2, eadr):
         v = signed(self.state.gr[r1]) + signed(self.state.gr[r2])
-        if MIN_SIGNED <= v <= MAX_SIGNED:	# check overflow
+        if MIN_SIGNED <= v <= MAX_SIGNED:  # check overflow
             of = 0
         else:
             of = 1
@@ -310,7 +318,7 @@ All rights reserved.""")
 
     def exec_ADDL_r_adr_x(self, inst, gr, adr, xr, eadr):
         v = self.state.gr[gr] + self.memory[eadr]
-        if v >= 0x10000:	# check overflow
+        if v >= 0x10000:  # check overflow
             of = 1
         else:
             of = 0
@@ -320,7 +328,7 @@ All rights reserved.""")
 
     def exec_ADDL_r1_r2(self, inst, r1, adr, r2, eadr):
         v = self.state.gr[r1] + self.state.gr[r2]
-        if v >= 0x10000:	# check overflow
+        if v >= 0x10000:  # check overflow
             of = 1
         else:
             of = 0
@@ -330,7 +338,7 @@ All rights reserved.""")
 
     def exec_SUBA_r_adr_x(self, inst, gr, adr, xr, eadr):
         v = signed(self.state.gr[gr]) - signed(self.memory[eadr])
-        if MIN_SIGNED <= v <= MAX_SIGNED:	# check overflow
+        if MIN_SIGNED <= v <= MAX_SIGNED:  # check overflow
             of = 0
         else:
             of = 1
@@ -340,7 +348,7 @@ All rights reserved.""")
 
     def exec_SUBA_r1_r2(self, inst, r1, adr, r2, eadr):
         v = signed(self.state.gr[r1]) - signed(self.state.gr[r2])
-        if MIN_SIGNED <= v <= MAX_SIGNED:	# check overflow
+        if MIN_SIGNED <= v <= MAX_SIGNED:  # check overflow
             of = 0
         else:
             of = 1
@@ -350,7 +358,7 @@ All rights reserved.""")
 
     def exec_SUBL_r_adr_x(self, inst, gr, adr, xr, eadr):
         v = self.state.gr[gr] - self.memory[eadr]
-        if v < 0:	# check overflow
+        if v < 0:  # check overflow
             of = 1
         else:
             of = 0
@@ -360,7 +368,7 @@ All rights reserved.""")
 
     def exec_SUBL_r1_r2(self, inst, r1, adr, r2, eadr):
         v = self.state.gr[r1] - self.state.gr[r2]
-        if v < 0:	# check overflow
+        if v < 0:  # check overflow
             of = 1
         else:
             of = 0
@@ -432,12 +440,12 @@ All rights reserved.""")
     def exec_SRA_r_adr_x(self, inst, gr, adr, xr, eadr):
         v = self.state.gr[gr]
         sign = v & 0x8000
-        if sign:	# negative
+        if sign:  # negative
             v &= 0x7fff
             last_evicted = (v >> (eadr - 1)) & 1
             v >>= eadr
             v |= ((0x7fff >> eadr) ^ 0xffff)
-        else:		# non-negative
+        else:  # non-negative
             last_evicted = (v >> (eadr - 1)) & 1
             v >>= eadr
         self.state.gr[gr] = v
@@ -513,6 +521,7 @@ All rights reserved.""")
         # return to OS if the stack is empty
         if self.state.sp >= 0xffff:
             print('Program terminated.')
+            self.cmd_print()
             sys.exit()
         self.state.pr = self.memory[self.state.sp]
         self.state.sp += 1
@@ -528,7 +537,7 @@ All rights reserved.""")
             try:
                 line = input('IN> ')  # prompt for input
                 # must be shorter than 256 characters (COMET II specification)
-                line = line[:256]  
+                line = line[:256]
                 self.memory[len_] = len(line)
                 for c in line:
                     # higher bits are filled with zeroes (COMET II specification)
@@ -553,14 +562,27 @@ All rights reserved.""")
         # GR and FR are indefinite according to the COMET II specification
         self.state.pr += 1
 
+    def validate_stack(self):
+        if self.state.sp <= self.end_addr:
+            print(f'Stack exhasuted.  Program execution suspended.')
+            self.suspend = True
+
     def exec(self):
         """Execute a single instruction from the current PR register.  All
         registers and memory are updated according to the execution."""
         self.debug(f'exec(self={self})')
         # calcurate the effective address
         word, inst, gr, adr, xr = self.decode(self.state.pr)
+        if gr > 8 or xr > 8:
+            print(f'Illegal GR/XR register.  Program execution suspended.')
+            print(
+                f'op: #{inst:02x}, GR: #{gr:02x}, adr: #{adr:04x}, XR: #{xr:02x}'
+            )
+            self.suspend = True
+            return
+
         eadr = adr
-        if xr > 0:	# index register
+        if xr > 0:  # index register
             eadr += self.state.gr[xr]
         eadr &= 0xffff
         # obtain the mnemonic and the operand at the current address
@@ -569,19 +591,24 @@ All rights reserved.""")
         try:
             subr = eval(f'Comet.exec_{nemonic}_{categ}')
         except AttributeError:
-            die(f'Comet.exec_{nemonic}_{categ} not implemented '
-                )
+            die(f'Comet.exec_{nemonic}_{categ} not implemented ')
         self.debug(
             f'exec_{nemonic}_{categ}(inst=#{inst:02x}, gr={gr}, adr=#{adr:04x}, xr={xr}'
         )
         subr(self, inst, gr, adr, xr, eadr)
+        self.validate_stack()
 
     # ----------------------------------------------------------------
     def cmd_run(self, *args):
-        """Start execution of the program.  Execution of the program is
+        """Start execution of the program from the beginning."""
+        self.load(self.file)
+
+    def cmd_continue(self, *args):
+        """Continue execution of the program.  Execution of the program is
         interrupted if it encounters any breakpoint."""
+        self.suspend = False
         try:
-            while True:
+            while not self.suspend:
                 self.exec()
                 # check the PC is at one of breakpoints
                 for n in sorted(self.breakpoints.keys()):
@@ -590,7 +617,7 @@ All rights reserved.""")
                         print(f'Breakpoint {n}, #{addr:04x}')
                         return
         except KeyboardInterrupt:
-            warn(f'execution stopped at #{self.state.pr:04x}')
+            print(f'Execution stopped at #{self.state.pr:04x}')
 
     def cmd_step(self, *args):
         """Step execution.  Argument N means do this N times."""
@@ -612,7 +639,7 @@ All rights reserved.""")
                         self.breakpoints[n] = addr
                         break
             else:
-                warn(f'invalid breakpoint address "{args[0]}"')
+                print(f'Invalid breakpoint address "{args[0]}"')
         except IndexError:
             pass
 
@@ -629,7 +656,7 @@ All rights reserved.""")
                 n = parse_number(args[0])
                 del self.breakpoints[n]
             except IndexError:
-                warn(f"invalid breakpoint number '{args[0]}'")
+                print(f"Invalid breakpoint number '{args[0]}'")
 
     def cmd_info(self, *args):
         """Print information on breakpoints."""
@@ -645,18 +672,17 @@ All rights reserved.""")
         sp = self.state.sp
         gr = self.state.gr
         of, sf, zf = self.state.of, self.state.sf, self.state.zf
-        print(
-            ""
-            f"PR  #{pr:04x} [{inst:4} {opr:15}]      "
-            f"SP  #{sp:04x}\t\tOF {of}   SF {sf}   ZF {zf}\n"
-            f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
-            f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
-            f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) "
-            f"GR3 #{gr[3]:04x} ({signed(gr[3]):6})\n"
-            f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
-            f"GR5 #{gr[5]:04x} ({signed(gr[5]):6}) "
-            f"GR6 #{gr[6]:04x} ({signed(gr[6]):6}) "
-            f"GR7 #{gr[7]:04x} ({signed(gr[7]):6})")
+        print(""
+              f"PR  #{pr:04x} [{inst:4} {opr:15}]      "
+              f"SP  #{sp:04x}\t\tOF {of}   SF {sf}   ZF {zf}\n"
+              f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
+              f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
+              f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) "
+              f"GR3 #{gr[3]:04x} ({signed(gr[3]):6})\n"
+              f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
+              f"GR5 #{gr[5]:04x} ({signed(gr[5]):6}) "
+              f"GR6 #{gr[6]:04x} ({signed(gr[6]):6}) "
+              f"GR7 #{gr[7]:04x} ({signed(gr[7]):6})")
 
     def cmd_dump(self, *args):
         """Dump 128 words of memory image from specified address.  If address
@@ -707,19 +733,19 @@ All rights reserved.""")
             if addr is not None:
                 self.state.pr = parse_number(addr)
             else:
-                warn(f'invalid jump address "{args[0]}"')
+                print(f'Invalid jump address "{args[0]}"')
 
     def cmd_memory(self, *args):
         """Change the memory at ADDRESS to VALUE."""
         if len(args) != 2:
-            warn('usage: memory address value')
+            print('usage: memory address value')
         else:
             addr = parse_number(args[0])
             val = parse_number(args[1])
             if addr is not None and val is not None:
                 self.memory[addr] = val
             else:
-                warn('invalid address "{args[0]}"/value "{args[1]}"')
+                print('Invalid address "{args[0]}"/value "{args[1]}"')
 
     def cmd_disasm(self, *args):
         """Disassemble 32 words from specified address.  If the address is not
@@ -729,7 +755,7 @@ All rights reserved.""")
         else:
             addr = parse_number(args[0])
             if addr is None:
-                warn(f'invalid address "{args[0]}"')
+                print(f'Invalid address "{args[0]}"')
                 return
         for n in range(16):
             categ, inst, opr, size = self.parse(addr)
@@ -742,6 +768,7 @@ All rights reserved.""")
 List of commands:
 
 r,  run         Start execution of program.
+c,  continue    Continue program being debugged after breakpoint.
 s,  step        Step execution.  Argument N means do this N times.
 b,  break       Set a breakpoint at specified address.
 d,  del 	Delete some breakpoints.
@@ -792,7 +819,7 @@ q,  quit        Exit comet.""")
                         self.cmd_print()
                     break
             else:
-                print(f"undefined command: '{cmd}'. Try 'help'")
+                print(f"Undefined command: '{cmd}'. Try 'help'")
 
 def main():
     # parse command-line options
