@@ -26,7 +26,7 @@ import readline
 from perlcompat import die, warn, getopts
 import tbdump
 
-VERSION = 0.6
+VERSION = 0.8
 
 # maximum/minimum of signed value
 MAX_SIGNED = 32767
@@ -93,6 +93,7 @@ CMDTBL = [
     (r'^r|run', 'cmd_run', True),
     (r'^c|continue', 'cmd_continue', True),
     (r'^st|stack', 'cmd_stack', False),
+    (r'^l|label', 'cmd_label', False),
     (r'^s|step', 'cmd_step', True),
 ]
 
@@ -117,23 +118,6 @@ def unsigned(val):
     else:
         return val
 
-def parse_number(v):
-    """Convert number V, either a string or an integer, to unsigned
-    short."""
-    if type(v) == int:
-        return int(v) & 0xffff
-    elif type(v) == str:
-        if re.search(r'^[-+]?\d+$', v):
-            return int(v) & 0xffff
-        else:
-            # different from CASL II specification, this program accepts
-            # lowercase characters and non-4-digit numbers
-            m = re.search(r'^#([\da-fA-F]+)$', v)
-            if m:
-                # convert hex to decimal
-                return int(m.group(1), base=16) & 0xffff
-    return None
-
 # ----------------------------------------------------------------
 class State:
     def __init__(self):
@@ -152,6 +136,8 @@ class Comet:
         self.start_addr = None
         self.end_addr = None
         self.suspend = False
+        self.label = {}
+        self.label_for = {}
 
     def __repr__(self):
         return f'#{self.state.pr:04x}'
@@ -166,20 +152,45 @@ This is COMET, version {VERSION}.
 Copyright (c) 2021, Hiroyuki Ohsaki.
 All rights reserved.""")
 
-    def load(self, file):
+    def parse_number(self, v):
+        """Convert number V, either a string or an integer, to unsigned
+        short."""
+        if type(v) == int:
+            return int(v) & 0xffff
+        elif type(v) == str:
+            if re.search(r'^[-+]?\d+$', v):
+                return int(v) & 0xffff
+            elif v in self.label:
+                return self.label[v]
+            else:
+                # different from CASL II specification, this program accepts
+                # lowercase characters and non-4-digit numbers
+                m = re.search(r'^#([\da-fA-F]+)$', v)
+                if m:
+                    # convert hex to decimal
+                    return int(m.group(1), base=16) & 0xffff
+        return None
+
+    def hex_repr(self, v):
+        if v in self.label_for:
+            return f'#{v:04x} <{self.label_for[v]}>'
+        else:
+            return f'#{v:04x}'
+
+    def load_object(self):
         """Open COMET object file FILE and load the content of the file into
         the memory.  If the file is not a valid COMET object file, display
         error and abort the program."""
-        self.debug(f'load(self={self}, file={file})')
+        self.debug(f'load_object(self={self})')
         # FIXME: memory must be cleared
         try:
-            with open(file, 'rb') as f:
-                print(f'Reading object from {file}...', end='')
+            with open(self.file, 'rb') as f:
+                print(f'Reading object from {self.file}...', end='')
 
                 # parse the file header
                 header = f.read(16)
                 if header[:4] != b'CASL':
-                    die(f'{file}: not a COMET object file')
+                    die(f'{self.file}: not a COMET object file')
                 self.start_addr = struct.unpack('>H', header[4:6])[0]
 
                 # load object into the memory
@@ -195,11 +206,31 @@ All rights reserved.""")
                     addr += 1
                 print('done.')
         except FileNotFoundError:
-            warn(f"Opening '{file}' failed")
+            warn(f"Opening '{self.file}' failed")
+
+    def load_label(self):
+        self.debug(f'load_label(self={self})')
+        file = re.sub(r'\.com$', '.clb', self.file)
+        try:
+            with open(file, 'r') as f:
+                print(f'Reading label(s) from {file}...', end='')
+                for line in f:
+                    line = line.rstrip()
+                    label, val = line.split('\t')
+                    v = int(val, 16)
+                    self.label[label] = v
+                    self.label_for[v] = label
+                print('done.')
+        except FileNotFoundError:
+            pass
+        
+    def load(self, file):
         self.file = file
+        self.load_object()
+        self.load_label()
         self.state.sp = 0xffff
         self.state.pr = self.start_addr
-
+        
     def decode(self, addr=None):
         """Decode two words from the address ADDR, and return a tuple of
         the first word, op code, GR, address, and XR.  If ADDR is not
@@ -232,7 +263,7 @@ All rights reserved.""")
         if inst in INSTTBL:
             categ, nemonic = INSTTBL[inst]
             if categ == 'r_adr_x':
-                opr = f'GR{gr}, #{adr:04x}'
+                opr = f'GR{gr}, {self.hex_repr(adr)}'
                 if xr > 0:
                     opr += f', GR{xr}'
                 size = 2
@@ -240,7 +271,7 @@ All rights reserved.""")
                 opr = f'GR{gr}, GR{xr}'
                 size = 1
             elif categ == 'adr_x':
-                opr = f'#{adr:04x}'
+                opr = f'{self.hex_repr(adr)}'
                 if xr > 0:
                     opr += f', GR{xr}'
                 size = 2
@@ -254,7 +285,7 @@ All rights reserved.""")
             # interpret as data words by default
             categ = 'nopr'
             nemonic = 'DC'
-            opr = f'#{word:04x}'
+            opr = f'#{self.hex_repr(word)}'
             size = 1
         self.debug(
             f'parse: categ={categ}, nemonic={nemonic}, opr={opr}, size={size}')
@@ -614,15 +645,15 @@ All rights reserved.""")
                 for n in sorted(self.breakpoints.keys()):
                     addr = self.breakpoints[n]
                     if self.state.pr == addr:
-                        print(f'Breakpoint {n}, #{addr:04x}')
+                        print(f'Breakpoint {n}, {self.hex_repr(addr)}')
                         return
         except KeyboardInterrupt:
-            print(f'Execution stopped at #{self.state.pr:04x}')
+            print(f'Execution stopped at {self.hex_repr(self.state.pr)}')
 
     def cmd_step(self, *args):
         """Step execution.  Argument N means do this N times."""
         try:
-            count = parse_number(args[0])
+            count = self.parse_number(args[0])
         except IndexError:
             count = 1
         for n in range(count):
@@ -631,12 +662,13 @@ All rights reserved.""")
     def cmd_break(self, *args):
         """Set a breakpoint at specified address."""
         try:
-            addr = parse_number(args[0])
+            addr = self.parse_number(args[0])
             if addr is not None:
                 # register at the first available slot
                 for n in range(1, 100):
                     if not n in self.breakpoints:
                         self.breakpoints[n] = addr
+                        print(f'Breakpoint {n} at {self.number_repr(addr)}')
                         break
             else:
                 print(f'Invalid breakpoint address "{args[0]}"')
@@ -653,7 +685,7 @@ All rights reserved.""")
                 self.breakpoints.clear()
         else:
             try:
-                n = parse_number(args[0])
+                n = self.parse_number(args[0])
                 del self.breakpoints[n]
             except IndexError:
                 print(f"Invalid breakpoint number '{args[0]}'")
@@ -662,7 +694,7 @@ All rights reserved.""")
         """Print information on breakpoints."""
         for n in sorted(self.breakpoints.keys()):
             addr = self.breakpoints[n]
-            print(f'{n}: #{addr:04x}')
+            print(f'{n}: {self.hex_repr(addr)}')
 
     def cmd_print(self, *args):
         """Print status of PR/FR/GR0--GR7 registers."""
@@ -688,7 +720,7 @@ All rights reserved.""")
         """Dump 128 words of memory image from specified address.  If address
         is not specified, dump from the current PR (Program Register)."""
         try:
-            addr = parse_number(args[0])
+            addr = self.parse_number(args[0])
         except IndexError:
             addr = self.state.pr
         try:
@@ -729,9 +761,9 @@ All rights reserved.""")
         if not args:
             warn(f'usage: jump address')
         else:
-            addr = parse_number(args[0])
+            addr = self.parse_number(args[0])
             if addr is not None:
-                self.state.pr = parse_number(addr)
+                self.state.pr = self.parse_number(addr)
             else:
                 print(f'Invalid jump address "{args[0]}"')
 
@@ -740,8 +772,8 @@ All rights reserved.""")
         if len(args) != 2:
             print('usage: memory address value')
         else:
-            addr = parse_number(args[0])
-            val = parse_number(args[1])
+            addr = self.parse_number(args[0])
+            val = self.parse_number(args[1])
             if addr is not None and val is not None:
                 self.memory[addr] = val
             else:
@@ -753,14 +785,18 @@ All rights reserved.""")
         if not args:
             addr = self.state.pr
         else:
-            addr = parse_number(args[0])
+            addr = self.parse_number(args[0])
             if addr is None:
                 print(f'Invalid address "{args[0]}"')
                 return
         for n in range(16):
             categ, inst, opr, size = self.parse(addr)
-            print(f'#{addr:04x}\t{inst}\t{opr}')
+            print(f'{self.hex_repr(addr):16} {inst}\t{opr}')
             addr += size
+
+    def cmd_label(self, *args):
+        for label, val in self.label.items():
+            print(f'{label}\t#{val:04x} ({signed(val):6})')
 
     def cmd_help(self, *args):
         """Print list of commands to the standard output."""
@@ -780,6 +816,7 @@ f,  file        Use FILE as program to be debugged.
 j,  jump        Continue program at specifed address.
 m,  memory      Change the memory at ADDRESS to VALUE.
 di, disasm      Disassemble 32 words from specified address.
+l, label        Print all defined labels.
 h,  help        Print list of commands.
 q,  quit        Exit comet.""")
 
@@ -826,7 +863,7 @@ def main():
     opt = getopts('qd') or usage()
     comet = Comet(debug=opt.d)
     comet.copyright()
-    # load COMNET object file if specified
+    # load COMET object file if specified
     if len(sys.argv) >= 2:
         file = sys.argv[1]
         comet.load(file)
