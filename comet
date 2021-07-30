@@ -23,9 +23,10 @@ import sys
 import readline
 
 from perlcompat import die, warn, getopts
+import ansiterm as at
 import tbdump
 
-VERSION = 0.9
+VERSION = 1.0
 
 # maximum/minimum of signed value
 MAX_SIGNED = 32767
@@ -137,6 +138,7 @@ class Comet:
         self.suspend = False
         self.label = {}
         self.label_for = {}
+        self.last_status = [''] * 13
 
     def __repr__(self):
         return f'#{self.state.pr:04x}'
@@ -182,12 +184,13 @@ All rights reserved.""")
         error and abort the program."""
         self.debug(f'load(self={self}, file={file})')
         # FIXME: memory must be cleared
+        self.file = file
         try:
             with open(file, 'r') as f:
                 print(f'Reading object from {file}...', end='')
                 # parse the file header
                 header = f.readline()
-                m = re.search(r'^COMETII\s+([\da-fA-F]+)', header)
+                m = re.search(r'^COMET\s+([\da-fA-F]+)', header)
                 if not m:
                     die(f'{file}: not a COMET object file')
                 self.start_addr = int(m.group(1), 16)
@@ -222,8 +225,6 @@ All rights reserved.""")
                 print('done.')
         except FileNotFoundError:
             warn(f"Opening '{file}' failed")
-
-        self.file = file
         self.state.sp = 0xffff
         self.state.pr = self.start_addr
 
@@ -664,7 +665,7 @@ All rights reserved.""")
                 for n in range(1, 100):
                     if not n in self.breakpoints:
                         self.breakpoints[n] = addr
-                        print(f'Breakpoint {n} at {self.number_repr(addr)}')
+                        print(f'Breakpoint {n} at {self.hex_repr(addr)}')
                         break
             else:
                 print(f'Invalid breakpoint address "{args[0]}"')
@@ -695,22 +696,29 @@ All rights reserved.""")
     def cmd_print(self, *args):
         """Print status of PR/FR/GR0--GR7 registers."""
         # disassemble a single instruction at the current PR
-        categ, inst, opr, size = self.parse()
         pr = self.state.pr
+        categ, inst, opr, size = self.parse()
+        print(f"PR  #{pr:04x} [{inst:4} {opr:30}] ", end='')
         sp = self.state.sp
-        gr = self.state.gr
         of, sf, zf = self.state.of, self.state.sf, self.state.zf
-        print(""
-              f"PR  #{pr:04x} [{inst:4} {opr:15}]      "
-              f"SP  #{sp:04x}\t\tOF {of}   SF {sf}   ZF {zf}\n"
-              f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) "
-              f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) "
-              f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) "
-              f"GR3 #{gr[3]:04x} ({signed(gr[3]):6})\n"
-              f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) "
-              f"GR5 #{gr[5]:04x} ({signed(gr[5]):6}) "
-              f"GR6 #{gr[6]:04x} ({signed(gr[6]):6}) "
-              f"GR7 #{gr[7]:04x} ({signed(gr[7]):6})")
+        gr = self.state.gr
+        status = [
+            f"SP  #{sp:04x}  ", f"OF {of}  ", f"SF {sf}  ", f"ZF {zf}\n",
+            f"GR0 #{gr[0]:04x} ({signed(gr[0]):6}) ",
+            f"GR1 #{gr[1]:04x} ({signed(gr[1]):6}) ",
+            f"GR2 #{gr[2]:04x} ({signed(gr[2]):6}) ",
+            f"GR3 #{gr[3]:04x} ({signed(gr[3]):6})\n",
+            f"GR4 #{gr[4]:04x} ({signed(gr[4]):6}) ",
+            f"GR5 #{gr[5]:04x} ({signed(gr[5]):6}) ",
+            f"GR6 #{gr[6]:04x} ({signed(gr[6]):6}) ",
+            f"GR7 #{gr[7]:04x} ({signed(gr[7]):6})\n"
+        ]
+        for last, now in zip(self.last_status, status):
+            if last and now != last:
+                now = re.sub(r'(SP|[OSZ]F|GR\d) ', r'\1*', now)
+                now = at.yellow(now, bold=True)
+            print(now, end='')
+        self.last_status = status
 
     def cmd_dump(self, *args):
         """Dump 128 words of memory image from specified address.  If address
@@ -812,7 +820,7 @@ f,  file        Use FILE as program to be debugged.
 j,  jump        Continue program at specifed address.
 m,  memory      Change the memory at ADDRESS to VALUE.
 di, disasm      Disassemble 32 words from specified address.
-l, label        Print all defined labels.
+l,  label       Print all defined labels.
 h,  help        Print list of commands.
 q,  quit        Exit comet.""")
 
