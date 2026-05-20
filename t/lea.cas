@@ -1,3 +1,0 @@
-LEA	START
-	LEA	GR0, 123
-	END

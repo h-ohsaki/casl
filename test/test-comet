@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+#
+#
+# Copyright (c) 2021, Hiroyuki Ohsaki.
+# All rights reserved.
+#
+# $Id: $
+#
+
+import fileinput
+import os
+import os.path
+import re
+import subprocess
+import sys
+
+from perlcompat import die, warn, getopts
+import tbdump
+
+from comet import *
+
+def usage():
+    die(f"""\
+usage: {sys.argv[0]} [-v] [file...]
+  -v    verbose mode
+""")
+
+def main():
+    opt = getopts('v') or usage()
+    verbose = opt.v
+    base = sys.argv[1]
+
+    testset = {}
+    with open(f'{base}.out') as f:
+        for line in f:
+            line = line.rstrip()
+            m = re.search(r'^\s*\d+ ([0-9a-f]+) .*; \? (.+)$', line)
+            if m:
+                addr, tests = m.groups()
+                testset[addr] = re.split(r'\s+', tests)
+
+    comet = Comet(debug=False)
+    comet.load(f'{base}.com')
+    count = 1
+    while True:
+        addr = f'{comet.state.pr:04x}'
+        comet.cmd_step()
+        if addr in testset:
+            for expr in testset[addr]:
+                for n in range(8):
+                    expr = expr.replace(f'GR{n}', f'comet.state.gr[{n}]')
+                for reg in ['PR', 'SP', 'OF', 'SF', 'ZF']:
+                    expr = expr.replace(f'{reg}', f'comet.state.{reg.lower()}')
+                expr = re.sub(r'\((.+?)\)', r'comet.memory[\1]', expr)
+                if eval(expr):
+                    print(f'{count}: ok {expr}')
+                else:
+                    print(f'{count}: ng {expr}')
+                    
+                
+if __name__ == "__main__":
+    main()
+

@@ -3,7 +3,7 @@ COM_FILES = $(patsubst %.cas,%.com,$(SRC_FILES))
 
 %.com : %.cas
 	base=`basename $@ .com`; \
-	casl -a $< >$$base.out
+	../casl -a $< >$$base.out
 
 test:	$(COM_FILES)
 	for i in $(COM_FILES); \
