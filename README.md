@@ -26,7 +26,7 @@ The latest version of *casl* is available at https://pypi.org/project/casl/ .
 
 # COPYRIGHT
 
-Copyright (C) 2021 Hiroyuki Ohsaki (ohsaki[atmark]lsnl.jp)
+Copyright (C) 2021 Hiroyuki Ohsaki (code[atmark]lsnl.jp)
 
 # INSTALLATION
 
@@ -42,5 +42,5 @@ I appreciate your comments and/or suggestions.
 
 # AUTHOR
 
-Hiroyuki Ohsaki <ohsaki[atmark]lsnl.jp>
+Hiroyuki Ohsaki <code[atmark]lsnl.jp>
 

@@ -7,9 +7,9 @@ with open('README.md', 'r') as fh:
 
 setuptools.setup(
     name="casl",
-    version="1.0",
+    version="1.1",
     author="Hiroyuki Ohsaki",
-    author_email="ohsaki@lsnl.jp",
+    author_email="code@lsnl.jp",
     description="a simple implementation of CASL assembler/COMET simulator in Python",
     long_description=long_description,
     long_description_content_type="text/markdown",
